@@ -1734,15 +1734,16 @@ class transfer_locations(models.Model):
 
             record.total_quantity = total_quantity
             record.total_weight = total_weight
-        
+            
+    
     def void_transfer(self):
         """Mark transfer as voided and deactivate the latest associated pallet kilos record."""
         for record in self:
             if not self.env.user.has_group('multiple_relocation.inventory_super_admin'):
                 raise UserError(_("You do not have permission to void transfers."))
-
+    
             record.x_studio_voided = True
-
+    
             # Find the latest related pallet kilos record
             pallet_record = self.env['pallet_kilos_record_model.pallet_kilos_record_model'].search(
                 [('effective_document', '=', record.id), ('active', '=', True)],
@@ -1750,40 +1751,31 @@ class transfer_locations(models.Model):
                 limit=1
             )
             
-            
             if pallet_record:
-                if pallet_record.readjustment_document.id == record.id:
+                # Store data needed for recalculation before deactivating
+                warehouse_id = pallet_record.warehouse.id
+                is_blast_freezer = pallet_record.is_blast_freezer
+                start_time = pallet_record.start_time
+                
+                # Deactivate the record
+                if pallet_record.readjustment_document and pallet_record.readjustment_document.id == record.id:
                     pallet_record.readjustment_document = False
-                    pallet_record.active = False
-                else:
-                    # raise UserError(pallet_record.effective_document.name)
-                    pallet_record.active = False
+                pallet_record.active = False
+                
                 _logger.info("Deactivated pallet kilos record: %s", pallet_record.effective_document.name)
-                # Re-sync relevant records
-                record.re_sync_pallet_kilos_after_a_voided_transfer(record.x_studio_start_time, record.create_date)
-    
+                
+                # Recalculate running balances from this point forward
+                # Use the model's efficient recalculation method
+                pallet_record._recalculate_running_balances(
+                    warehouse_id, 
+                    is_blast_freezer, 
+                    start_time
+                )
+                
                 _logger.info("Voided transfer and archived Pallet Kilos Log: %s", record.name)
             else:
                 _logger.warning("No pallet kilos record found for transfer: %s", record.name)
-
-
-
-    def re_sync_pallet_kilos_after_a_voided_transfer(self, start_time, create_date):
-        """Re-sync pallet kilos records created after the voided transfer."""
-        domain = [
-            ('create_date', '>', create_date),
-            ('start_time', '>', start_time)
-        ]
-
-        records_to_sync = self.env['pallet_kilos_record_model.pallet_kilos_record_model'].search(domain)
-
-        for record in records_to_sync:
-            try:
-                record.resync_all()
-                _logger.debug("Resynced pallet record: %s", record.effective_document.name)
-            except Exception as e:
-                _logger.error("Failed to resync record %s: %s", record.effective_document.name, str(e))
-            
+    
     def unvoid_transfer(self):
         """Reverse the void operation: unmark transfer as voided and reactivate the associated pallet kilos record."""
         for record in self:
@@ -1811,35 +1803,35 @@ class transfer_locations(models.Model):
             )
             
             if pallet_record:
-                # If the pallet record was deactivated (not a readjustment case), reactivate it
+                # Store data needed for recalculation
+                warehouse_id = pallet_record.warehouse.id
+                is_blast_freezer = pallet_record.is_blast_freezer
+                start_time = pallet_record.start_time
+                
+                # Reactivate the record
                 if not pallet_record.active and not pallet_record.readjustment_document:
                     pallet_record.active = True
                     _logger.info("Reactivated pallet kilos record: %s", pallet_record.effective_document.name)
-                # If it was a readjustment case, restore the readjustment_document link
                 elif not pallet_record.readjustment_document:
                     pallet_record.readjustment_document = record.id
+                    pallet_record.active = True  # Ensure it's active when restoring readjustment
                     _logger.info("Restored readjustment document link for pallet kilos record: %s", pallet_record.effective_document.name)
                 
-                # Re-sync relevant records after unvoiding
-                record.re_sync_pallet_kilos_after_unvoided_transfer(record.x_studio_start_time, record.create_date)
+                # Refresh the record data after reactivation
+                pallet_record._populate_vehicle_data()
+                pallet_record._populate_operations_data()
+                pallet_record._populate_returns_data()
+                
+                # Recalculate running balances from this point forward
+                pallet_record._recalculate_running_balances(
+                    warehouse_id, 
+                    is_blast_freezer, 
+                    start_time
+                )
                 
                 _logger.info("Unvoided transfer and restored Pallet Kilos Log: %s", record.name)
             else:
                 _logger.warning("No pallet kilos record found for transfer: %s", record.name)
-    
-    def re_sync_pallet_kilos_after_unvoided_transfer(self, start_time, create_date):
-        """Re-sync pallet kilos records created after the unvoided transfer."""
-        domain = ['|',
-            ('create_date', '>', create_date),
-            ('start_time', '>', start_time)
-        ]
-        records_to_sync = self.env['pallet_kilos_record_model.pallet_kilos_record_model'].search(domain)
-        for record in records_to_sync:
-            try:
-                record.resync_all()
-                _logger.debug("Resynced pallet record after unvoiding: %s", record.effective_document.name)
-            except Exception as e:
-                _logger.error("Failed to resync record %s after unvoiding: %s", record.effective_document.name, str(e))
 
     
         
