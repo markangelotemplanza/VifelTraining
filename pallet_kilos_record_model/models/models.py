@@ -225,9 +225,12 @@ class PalletKilosRecordModel(models.Model):
                     'end_time': record.effective_document.x_studio_end_time,
                 })
 
+
     def _recalculate_running_balances(self, warehouse_id, blast_freezer_flag, from_datetime=None):
         """
         Efficiently recalculate running balances for all records in a warehouse after a given datetime
+        - overall_* fields: warehouse-wide totals (all owners)
+        - total_balance_* and beginning_balance_* fields: per owner
         """
         domain = [
             ('warehouse', '=', warehouse_id),
@@ -243,70 +246,119 @@ class PalletKilosRecordModel(models.Model):
         if not records_to_update:
             return
         
-        # Get the previous balance (record just before the from_datetime)
+        # Get the previous warehouse-wide balance (for overall_* fields)
         if from_datetime:
-            prev_record = self.search([
+            prev_warehouse_record = self.search([
                 ('warehouse', '=', warehouse_id),
                 ('is_blast_freezer', '=', blast_freezer_flag),
                 ('start_time', '<', from_datetime)
             ], order='start_time desc, id desc', limit=1)
             
-            if prev_record:
-                running_pallets = prev_record.overall_pallets
-                running_kilos = prev_record.overall_kilos
-                prev_total_pallets = prev_record.total_balance_in_pallets
-                prev_total_kilos = prev_record.total_balance_in_kilos
-                prev_total_units = prev_record.total_balance_in_units
-                prev_total_packaging = prev_record.total_balance_in_packaging
+            if prev_warehouse_record:
+                running_pallets = prev_warehouse_record.overall_pallets
+                running_kilos = prev_warehouse_record.overall_kilos
             else:
                 running_pallets = running_kilos = 0
-                prev_total_pallets = prev_total_kilos = prev_total_units = prev_total_packaging = 0
         else:
             running_pallets = running_kilos = 0
-            prev_total_pallets = prev_total_kilos = prev_total_units = prev_total_packaging = 0
-
+    
+        # Track per-owner balances
+        owner_balances = {}
+        
+        # Get previous balances for each owner
+        if from_datetime:
+            # Get the last record for each owner before from_datetime
+            owners_in_scope = records_to_update.mapped('owner_id')
+            for owner in owners_in_scope:
+                if not owner:
+                    continue
+                    
+                prev_owner_record = self.search([
+                    ('warehouse', '=', warehouse_id),
+                    ('is_blast_freezer', '=', blast_freezer_flag),
+                    ('owner_id', '=', owner.id),
+                    ('start_time', '<', from_datetime)
+                ], order='start_time desc, id desc', limit=1)
+                
+                if prev_owner_record:
+                    owner_balances[owner.id] = {
+                        'total_pallets': prev_owner_record.total_balance_in_pallets,
+                        'total_kilos': prev_owner_record.total_balance_in_kilos,
+                        'total_units': prev_owner_record.total_balance_in_units,
+                        'total_packaging': prev_owner_record.total_balance_in_packaging,
+                    }
+                else:
+                    owner_balances[owner.id] = {
+                        'total_pallets': 0,
+                        'total_kilos': 0,
+                        'total_units': 0,
+                        'total_packaging': 0,
+                    }
+        else:
+            # Initialize all owner balances to 0
+            owners_in_scope = records_to_update.mapped('owner_id')
+            for owner in owners_in_scope:
+                if owner:
+                    owner_balances[owner.id] = {
+                        'total_pallets': 0,
+                        'total_kilos': 0,
+                        'total_units': 0,
+                        'total_packaging': 0,
+                    }
+    
         # Batch update all records
         updates = []
         for record in records_to_update:
-            # Calculate running totals
+            # Calculate warehouse-wide running totals (overall_* fields)
             running_pallets += (record.pallets_received - record.pallets_withdrawn)
             running_kilos += (record.kilos_received - record.kilos_withdrawn)
             
-            # Calculate balance totals
+            # Calculate per-owner balance totals
+            if not record.owner_id:
+                # Skip records without owner
+                updates.append({
+                    'id': record.id,
+                    'overall_pallets': running_pallets,
+                    'overall_kilos': running_kilos,
+                    'beginning_balance_in_pallets': 0,
+                    'beginning_balance_in_kilos': 0,
+                    'total_balance_in_units': 0,
+                    'total_balance_in_packaging': 0,
+                    'total_balance_in_kilos': 0,
+                    'total_balance_in_pallets': 0,
+                })
+                continue
+                
+            owner_id = record.owner_id.id
+            
+            # Store beginning balance (before this record's operation)
+            beginning_pallets = owner_balances[owner_id]['total_pallets']
+            beginning_kilos = owner_balances[owner_id]['total_kilos']
+            
+            # Calculate new balance totals for this owner
             if record.effective_document and record.effective_document.picking_type_id.code == 'outgoing':
-                current_total_packaging = prev_total_packaging - record.packaging_withdrawn
-                current_total_units = prev_total_units - record.units_withdrawn
-                current_total_kilos = prev_total_kilos - record.kilos_withdrawn
-                current_total_pallets = prev_total_pallets - record.pallets_withdrawn
+                owner_balances[owner_id]['total_packaging'] -= record.packaging_withdrawn
+                owner_balances[owner_id]['total_units'] -= record.units_withdrawn
+                owner_balances[owner_id]['total_kilos'] -= record.kilos_withdrawn
+                owner_balances[owner_id]['total_pallets'] -= record.pallets_withdrawn
             elif record.effective_document and record.effective_document.picking_type_id.code == 'incoming':
-                current_total_packaging = prev_total_packaging + record.packaging_received
-                current_total_units = prev_total_units + record.units_received
-                current_total_kilos = prev_total_kilos + record.kilos_received
-                current_total_pallets = prev_total_pallets + record.pallets_received
-            else:
-                current_total_packaging = prev_total_packaging
-                current_total_units = prev_total_units
-                current_total_kilos = prev_total_kilos
-                current_total_pallets = prev_total_pallets
-
+                owner_balances[owner_id]['total_packaging'] += record.packaging_received
+                owner_balances[owner_id]['total_units'] += record.units_received
+                owner_balances[owner_id]['total_kilos'] += record.kilos_received
+                owner_balances[owner_id]['total_pallets'] += record.pallets_received
+    
             updates.append({
                 'id': record.id,
                 'overall_pallets': running_pallets,
                 'overall_kilos': running_kilos,
-                'beginning_balance_in_pallets': prev_total_pallets,
-                'beginning_balance_in_kilos': prev_total_kilos,
-                'total_balance_in_units': current_total_units,
-                'total_balance_in_packaging': current_total_packaging,
-                'total_balance_in_kilos': current_total_kilos,
-                'total_balance_in_pallets': current_total_pallets,
+                'beginning_balance_in_pallets': beginning_pallets,
+                'beginning_balance_in_kilos': beginning_kilos,
+                'total_balance_in_units': owner_balances[owner_id]['total_units'],
+                'total_balance_in_packaging': owner_balances[owner_id]['total_packaging'],
+                'total_balance_in_kilos': owner_balances[owner_id]['total_kilos'],
+                'total_balance_in_pallets': owner_balances[owner_id]['total_pallets'],
             })
-            
-            # Update previous values for next iteration
-            prev_total_pallets = current_total_pallets
-            prev_total_kilos = current_total_kilos
-            prev_total_units = current_total_units
-            prev_total_packaging = current_total_packaging
-
+    
         # Batch write all updates
         for update in updates:
             record_id = update.pop('id')
