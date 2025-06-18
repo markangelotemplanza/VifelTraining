@@ -62,7 +62,7 @@
                                     <field name="bf_pallet_char" readonly="not is_a_blast_freeze"/>
                                     <field name="result_package_id" domain="[
                                                                            ('location_id', '=', False), 
-                                                                           ('package_type_id.name', '=', pallet_type), 
+                                                                           ('package_type_id.name', '=', pallet_type),  
                                                                            ('x_studio_is_reserved', '=', False),
                                                                            ('x_studio_warehouse.id', '=', warehouse_id)
                                         

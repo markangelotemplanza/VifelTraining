@@ -43,7 +43,12 @@ Long description of module's purpose
             'multiple_relocation/static/src/css/custom_css.scss',
             'multiple_relocation/static/src/js/test.js',
             'multiple_relocation/static/src/js/test2.js'
+            ''
         ],
+        'web.report_assets_common': [
+            'multiple_relocation/static/src/css/fonts.css',
+            
+        ]
         
     }
 

@@ -50,7 +50,7 @@ class PalletKilosRecordModel(models.Model):
     total_balance_in_pallets = fields.Float(store=True, string="Total Balance in Pallets", readonly=True)
 
     # Return fields with storage
-    return_id = fields.Many2one('stock.picking', readonly=True, compute="_compute_returns")
+    return_id = fields.Many2one('stock.picking', readonly=True, compute="_compute_returns", string="Return RR ID")
     return_heads = fields.Float(string="Total Return Units", readonly=True, 
                                compute="_compute_returns")
     return_packaging = fields.Float(string="Total Return Packaging", readonly=True, 
@@ -77,7 +77,8 @@ class PalletKilosRecordModel(models.Model):
             ('6wheeler', '6 Wheeler'),
             ('10wheeler', '10 Wheeler'),
             ('20ft_container', '20ft Container'),
-            ('40ft_container', '40ft Container')
+            ('40ft_container', '40ft Container'),
+            ('N/A', 'N/A')
         ],
         string="Truck Type", readonly=True, store=True
     )
@@ -106,8 +107,8 @@ class PalletKilosRecordModel(models.Model):
     )
 
     def resync_all(self):
-        all_records = self.search([], order='start_time asc')
-        for record in all_records:
+        # all_records = self.search([], order='start_time asc')
+        for record in self:
             record._set_default_values_from_document(record.effective_document)
             record._compute_overall_balance()
             record._compute_beginning_balance()

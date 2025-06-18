@@ -1658,7 +1658,13 @@ class transfer_locations(models.Model):
 
     total_quantity = fields.Float(string="Total Quantity", compute="_compute_totals", store=True)
     total_weight = fields.Float(string="Total Weight (KG)", compute="_compute_totals", store=True)
-    
+
+    vifel_type_of_operation = fields.Selection(string="Operation Type", store=True, compute="_comupute_vifel_type_of_operation", selection=[
+        ('BFRR', 'BF RECEIVING'),
+        ('BFWR', 'BF WITHDRAWING'),
+        ('RR', 'RECEIVING'),
+        ('WR', 'WITHDRAWING'),
+    ])
     truck_type = fields.Selection(
         string="Truck Type",
         selection=[
@@ -1699,6 +1705,23 @@ class transfer_locations(models.Model):
     def operation_type_checker(self, operation_type_record):
         is_receiving = operation_type_record.code == 'incoming'
         return operation_type_record.is_blast_freeze_operation, is_receiving
+
+    @api.depends('picking_type_id')
+    def _comupute_vifel_type_of_operation(self):
+        for record in self:
+            is_blast_freeze, is_receiving = record.operation_type_checker(record.picking_type_id)
+
+            if not is_blast_freeze and is_receiving:
+                record.vifel_type_of_operation = 'RR'
+            elif not is_blast_freeze and not is_receiving:
+                record.vifel_type_of_operation = 'WR'
+            elif is_blast_freeze and is_receiving:
+                record.vifel_type_of_operation = 'BFRR'
+            elif is_blast_freeze and not is_receiving:
+                record.vifel_type_of_operation = 'BFWR'
+            else:
+                record.vifel_type_of_operation = 'RR'
+
     
     @api.depends('move_ids_without_package.quantity', 'move_ids_without_package.x_studio_actual_packaging_demand')
     def _compute_totals(self):
@@ -1806,7 +1829,7 @@ class transfer_locations(models.Model):
     
     def re_sync_pallet_kilos_after_unvoided_transfer(self, start_time, create_date):
         """Re-sync pallet kilos records created after the unvoided transfer."""
-        domain = [
+        domain = ['|',
             ('create_date', '>', create_date),
             ('start_time', '>', start_time)
         ]
@@ -2167,7 +2190,7 @@ class transfer_locations(models.Model):
             
         }
     
-    def calculate_page_data(self, processed_moves, page_size=15):
+    def calculate_page_data(self, processed_moves, page_size=14):
         """
         Calculate pagination data for the processed moves
         """

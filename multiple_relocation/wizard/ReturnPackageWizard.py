@@ -46,6 +46,7 @@ class ReturnPackageWizardLine(models.TransientModel):
     def _compute_sync_issues(self):
         for line in self:
             # Check if pack uom has sync issue (reduced but others not reduced proportionally)
+            
             line.has_pack_sync_issue = (
                 line.pack_uom_unit < line.actual_pack_uom_unit and
                 line.pack_uom_unit == line.actual_pack_uom_unit and 
@@ -194,11 +195,12 @@ class ReturnPackageWizard(models.TransientModel):
                  'package_line_ids.actual_quantity')
     def _compute_sync_warnings(self):
         for wizard in self:
-            selected_packages = wizard.package_line_ids.filtered(lambda line: line.select_package)
+            selected_packages = wizard.package_line_ids
             warning_lines = []
             has_warnings = False
-            
+
             for record in selected_packages:
+                
                 if (record.pack_uom_unit < record.actual_pack_uom_unit or
                     record.min_uom_unit < record.actual_min_uom_unit or
                     record.quantity < record.actual_quantity):

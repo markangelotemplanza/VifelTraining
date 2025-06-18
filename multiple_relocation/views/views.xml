@@ -9,14 +9,23 @@
           <xpath expr="//tree[1]/field[@name='name']" position="after">
             <xpath expr="//field[@name='partner_id']" position="move"/>
           </xpath>
+          <xpath expr="//field[@name='name']" position="before">
+  <field name="vifel_type_of_operation" optional="show"
+         decoration-success="vifel_type_of_operation == 'RR' or vifel_type_of_operation == 'BFRR'"
+         decoration-danger="vifel_type_of_operation == 'WR' or vifel_type_of_operation == 'BFWR'"  widget="badge"/>
+
+
+          </xpath>
           <xpath expr="//field[@name='name']" position="after">
             <field name="partner_id" optional="show"/>
+            <field name="x_studio_voided" optional="show"/>
             <field name="x_studio_has_discrepancy" optional="show"/>
             <field name="truck_type" optional="show"/>
             <field name="x_studio_truck_time" optional="show"/>
             <field name="x_studio_source" optional="show"/>
             <field name="x_studio_destination" optional="show"/>
-            <field name="x_studio_last_operation_source_document" optional="show"/>
+            <field name="x_studio_re_adjustment_for_document" optional="show" widget="many2onebutton" string="Revision For"/>
+            <field name="x_studio_last_operation_source_document" optional="show" widget="many2onebutton"/>
           </xpath>
           <xpath expr="//field[@name='origin']" position="attributes">
             <attribute name="column_invisible">True</attribute>
@@ -38,6 +47,7 @@
              <field name="total_quantity" optional="show"/>
              <field name="total_weight" optional="show"/>
           </xpath>
+          <xpath expr="//tree[1]/field[@name='partner_id'][2]" position="replace"/>
         </field>
     </record>
 
