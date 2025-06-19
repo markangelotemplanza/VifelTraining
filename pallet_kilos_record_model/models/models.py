@@ -41,10 +41,10 @@ class PalletKilosRecordModel(models.Model):
     units_withdrawn = fields.Float(string="Units Withdrawn", readonly=True, store=True)
 
     # Balance fields - stored, calculated via method calls
-    total_balance_in_units = fields.Float(store=True, string="Total Balance in Units", readonly=True)
-    total_balance_in_packaging = fields.Float(store=True, string="Total Balance in Packaging", readonly=True)
-    total_balance_in_kilos = fields.Float(store=True, string="Total Balance in Kilos (KG)", readonly=True)
-    total_balance_in_pallets = fields.Float(store=True, string="Total Balance in Pallets", readonly=True)
+    total_balance_in_units = fields.Float(store=True, string="Total Balance in Units", readonly=True, group_operator=False)
+    total_balance_in_packaging = fields.Float(store=True, string="Total Balance in Packaging", readonly=True, group_operator=False)
+    total_balance_in_kilos = fields.Float(store=True, string="Total Balance in Kilos (KG)", readonly=True, group_operator=False)
+    total_balance_in_pallets = fields.Float(store=True, string="Total Balance in Pallets", readonly=True, group_operator=False)
 
     # Return fields - stored, not computed
     return_id = fields.Many2one('stock.picking', readonly=True, string="Return RR ID")
@@ -85,8 +85,8 @@ class PalletKilosRecordModel(models.Model):
                            default=lambda self: self._get_static_var('Max Kilograms'))
 
     # Running balance fields - stored, not computed
-    overall_pallets = fields.Float(string='Overall Pallets', store=True)
-    overall_kilos = fields.Float(string='Overall Kilos', store=True)
+    overall_pallets = fields.Float(string='Overall Pallets', store=True, group_operator=False)
+    overall_kilos = fields.Float(string='Overall Kilos', store=True, group_operator=False)
     
     # Add blast freezer flag for efficient filtering
     is_blast_freezer = fields.Boolean(string="Is Blast Freezer", store=True, index=True)
