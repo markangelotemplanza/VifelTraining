@@ -245,8 +245,15 @@ class ReturnPackageWizard(models.TransientModel):
         if not self.picking_type_id:
             # Default to the picking type for Receipts if not specified
             warehouse_id = self.picking_id.picking_type_id.warehouse_id.id
-            self.picking_type_id = self.env['stock.picking.type'].search([('name', '=', "RECEIVING" if "WITHDRAWING" in self.picking_id.picking_type_id.name else "Blast Freeze - IN"), ('warehouse_id', '=', warehouse_id)], limit=1)
+            self.picking_type_id = None
 
+        self.picking_type_id = self.env['stock.picking.type'].search([
+            ('code', '=', 'incoming'),
+            ('is_a_blast_freeze_operation', '=', self.picking_id.picking_type_id.is_a_blast_freeze_operation),
+            ('warehouse_id', '=', warehouse_id)
+        ], limit=1)
+
+                
         # Copy the picking record
         new_picking = self.picking_id.copy(default={
             'picking_type_id': self.picking_type_id.id,
