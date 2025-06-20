@@ -249,7 +249,7 @@ class ReturnPackageWizard(models.TransientModel):
 
         self.picking_type_id = self.env['stock.picking.type'].search([
             ('code', '=', 'incoming'),
-            ('is_a_blast_freeze_operation', '=', self.picking_id.picking_type_id.is_a_blast_freeze_operation),
+            ('is_blast_freeze_operation', '=', self.picking_id.picking_type_id.is_blast_freeze_operation),
             ('warehouse_id', '=', warehouse_id)
         ], limit=1)
 
