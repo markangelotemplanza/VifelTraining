@@ -95,7 +95,7 @@ class stock_move_line_Override(models.Model):
     bf_pallet_char = fields.Char(string="Pallet # - Text", compute='_compute_bf_pallet_char', readonly=False, store=True) 
     is_blast_freeze = fields.Boolean(related="picking_id.x_studio_is_a_blast_freezer", string="Is a Blast Freeze Transaction")
     computed_quant_id = fields.Many2one('stock.quant', string="quant_id", compute="_computed_computed_quant_id")
-
+    is_return = fields.Boolean(string="Is a Return")
 
     is_package_multiple_withdraw = fields.Boolean(
         string="Is Package In Multiple Transfers",

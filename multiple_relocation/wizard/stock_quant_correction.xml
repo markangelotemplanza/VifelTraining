@@ -10,6 +10,12 @@
             <field name="arch" type="xml">
              <form string="Stock Quant Corrections" class="o_form_view o_form_wizard">
                 <sheet style="width: 100%; max-width: none;">
+
+                <!-- ✅ Friendly red banner -->
+                <div class="alert alert-danger" role="alert" style="margin-bottom: 10px;">
+                    <strong>Note:</strong> This wizard allows adjustments to <code>Pallet details</code>.
+                    Please double-check your entries before confirming to ensure accuracy.
+                </div>
                     <div style="width: 100%; margin-top: 10px;">
                         <field name="line_ids" nolabel="1">
                             <tree editable="bottom" create="false" delete="false">

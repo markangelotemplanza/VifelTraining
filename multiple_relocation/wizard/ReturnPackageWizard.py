@@ -36,6 +36,7 @@ class ReturnPackageWizardLine(models.TransientModel):
     picking_id = fields.Many2one('stock.picking')
     pallet_type = fields.Char(string="Pallet Type")
     warehouse_id = fields.Many2one('stock.warehouse')
+    lot_id = fields.Many2one('stock.lot')
 
     @api.onchange('pallet_series_id', 'product_id','pack_uom','min_uom')
     def onchange_fields(self):
@@ -138,6 +139,7 @@ class ReturnPackageWizard(models.TransientModel):
                             'product_id': move_line.product_id.id,
                             'expiration_date': move_line.x_studio_expiration_date,
                             'production_date': move_line.x_studio_production_date,
+                            'lot_id': move_line.lot_id.id,
                             'stock_move_line': move_line.id,
                             'return_counter': move_line.x_studio_return_count,
                             'container_number': move_line.x_studio_container_number,
@@ -162,6 +164,7 @@ class ReturnPackageWizard(models.TransientModel):
                                 'product_id': move_line.product_id.id,
                                 'expiration_date': move_line.x_studio_expiration_date,
                                 'production_date': move_line.x_studio_production_date,
+                                'lot_id': move_line.lot_id.id,
                                 'stock_move_line': move_line.id,
                                 'return_counter': move_line.x_studio_return_count,
                                 'container_number': move_line.x_studio_container_number,
@@ -242,7 +245,7 @@ class ReturnPackageWizard(models.TransientModel):
         if not self.picking_type_id:
             # Default to the picking type for Receipts if not specified
             warehouse_id = self.picking_id.picking_type_id.warehouse_id.id
-            self.picking_type_id = self.env['stock.picking.type'].search([('name', '=', "Receipts" if "Delivery Orders" in self.picking_id.picking_type_id.name else "Blast Freeze - IN"), ('warehouse_id', '=', warehouse_id)], limit=1)
+            self.picking_type_id = self.env['stock.picking.type'].search([('name', '=', "RECEIVING" if "WITHDRAWING" in self.picking_id.picking_type_id.name else "Blast Freeze - IN"), ('warehouse_id', '=', warehouse_id)], limit=1)
 
         # Copy the picking record
         new_picking = self.picking_id.copy(default={
@@ -330,9 +333,11 @@ class ReturnPackageWizard(models.TransientModel):
             # Update the additional fields after creation
             for package, move_line in zip(selected_packages, created_move_lines):
                 move_line.write({
+                    'is_return': True,
                     'picking_id': new_picking.id,
                     'x_studio_expiration_date': package.expiration_date,
                     'x_studio_production_date': package.production_date,
+                    'lot_id': package.lot_id.id,
                     'x_studio_return_count': package.return_counter if self.return_reason == 'Wrong Details Encoded' else package.return_counter + 1,
                     'x_studio_pallet_series_id': package.pallet_series_id,
                     'bf_pallet_char': package.bf_pallet_char,
