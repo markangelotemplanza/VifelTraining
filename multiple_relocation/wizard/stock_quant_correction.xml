@@ -71,7 +71,7 @@
             <field name="arch" type="xml">
                 <xpath expr="//tree" position="inside">
                     <header>
-                        <button name="action_stock_quant_relocate" string="Relocate" type="object" groups="stock.group_stock_manager" invisible="context.get('hide_location', False)" context="{'action_ref': 'stock.action_view_quants'}" class="btn-primary"/>/>
+                        <button name="action_stock_quant_relocate" string="Relocate" type="object" groups="stock.group_stock_manager" invisible="context.get('hide_location', False)" context="{'action_ref': 'stock.action_view_quants'}" class="btn-primary"/>
                         <button name="%(action_stock_quant_correction_wizard)d" 
                                 string="Correct Selected Quants" 
                                 type="action" 
