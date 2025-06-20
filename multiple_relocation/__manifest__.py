@@ -29,6 +29,7 @@ Long description of module's purpose
         'wizard/ReturnPackageWizard.xml',
         'wizard/SelectQuantWizard.xml',
         'wizard/SmallWizards.xml',
+        'wizard/stock_quant_correction.xml',
         'reports/inventory_summary_view.xml',
         'reports/count_sheet_view.xml',
         'data/data.xml'
