@@ -180,7 +180,8 @@ class stock_move_line_Override(models.Model):
 
                 # raise UserError(package_count)
                 line.is_package_multiple_withdraw = package_count > 0
-    
+            elif is_blast_freeze:
+                line.is_package_multiple_withdraw = False
     @api.depends('lot_id')
     def _computed_computed_quant_id(self):
         for record in self:
@@ -443,7 +444,7 @@ class stock_move_line_Override(models.Model):
     def unreserve_ondelete_location(self):
 
         # Get the picking_id from the first record (all should have the same picking_id)
-        if self[0].picking_type_id and self[0].picking_type_code == 'incoming':
+        if self[0].picking_type_id and self[0].picking_id.picking_type_code == 'incoming':
             
             picking_id = self[0].picking_id.id
             owner = self[0].owner_id.name
