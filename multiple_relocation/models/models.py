@@ -217,7 +217,7 @@ class stock_move_line_Override(models.Model):
         owner = self.owner_id.name
     
         for record in self:
-            if record.picking_type_id and 'receipts' in record.picking_type_id.name.lower() and record.result_package_id and record.product_id:
+            if record.picking_type_id and record.picking_id.picking_type_code == 'incoming' and record.result_package_id and record.product_id:
                 # Exclude the current record ID to avoid self-inclusion in search results
                 self_id = self.extract_id_from_newid(record.id)
                 previous_location = record._origin.location_dest_id
@@ -292,7 +292,7 @@ class stock_move_line_Override(models.Model):
 
         for record in self:
             # Ensure location_dest_id exists and check its child_ids
-            if record.location_dest_id and not record.location_dest_id.child_ids and record.picking_type_id and 'receipts' in record.picking_type_id.name.lower() and not record.location_dest_id.x_studio_is_an_aisle:
+            if record.location_dest_id and not record.location_dest_id.child_ids and record.picking_id.picking_type_code == 'incoming' and not record.location_dest_id.x_studio_is_an_aisle:
                 record.location_dest_id.write({
                     'x_studio_is_reserved': True,
                     'x_studio_receiving_report_id': record.picking_id.id
@@ -328,7 +328,7 @@ class stock_move_line_Override(models.Model):
                     ])
 
                     # Reserve the new location
-                    if not record.location_dest_id.child_ids or not record.location_dest_id.x_studio_receiving_report_id and record.picking_type_id and 'receipts' in record.picking_type_id.name.lower():
+                    if not record.location_dest_id.child_ids or not record.location_dest_id.x_studio_receiving_report_id and record.picking_type_id and record.picking_type_code == 'incoming':
                         
                         if record.location_dest_id and not record.location_dest_id.child_ids and not record.location_dest_id.x_studio_is_an_aisle:
                             
@@ -370,7 +370,7 @@ class stock_move_line_Override(models.Model):
                     ])
 
                     # Reserve the new pallet
-                    if not record.result_package_id.x_studio_receiving_report_id or record.picking_id.id == record.result_package_id.x_studio_receiving_report_id.id and record.picking_type_id and 'receipts' in record.picking_type_id.name.lower() and not record.location_dest_id.x_studio_is_an_aisle:
+                    if not record.result_package_id.x_studio_receiving_report_id or record.picking_id.id == record.result_package_id.x_studio_receiving_report_id.id and record.picking_type_id and record.picking_id.picking_type_code == 'incoming' and not record.location_dest_id.x_studio_is_an_aisle:
                         if record.result_package_id:
                             record.result_package_id.write({
                                 'x_studio_is_reserved': True,
@@ -443,7 +443,7 @@ class stock_move_line_Override(models.Model):
     def unreserve_ondelete_location(self):
 
         # Get the picking_id from the first record (all should have the same picking_id)
-        if self[0].picking_type_id and self[0].picking_type_id.name.lower() == 'receipts':
+        if self[0].picking_type_id and self[0].picking_type_code == 'incoming':
             
             picking_id = self[0].picking_id.id
             owner = self[0].owner_id.name
@@ -1143,10 +1143,10 @@ class OverrideStockQuant(models.Model):
         self.ensure_one()
         action = self.env["ir.actions.actions"]._for_xml_id("stock.stock_move_line_action")
         action['domain'] = [
-            '&', '&',
-                '|',
-                    ('location_id', '=', self.location_id.id),
-                    ('location_dest_id', '=', self.location_id.id),
+            # '&', '&',
+            #     '|',
+            #         ('location_id', '=', self.location_id.id),
+            #         ('location_dest_id', '=', self.location_id.id),
                 ('x_studio_pallet_series_id', '=', self.x_studio_pallet_series_id),
                 # ('is_quant_detail_adjusted', '=', True),
         ]
@@ -2545,7 +2545,7 @@ class transfer_locations(models.Model):
     def _onchange_locations_receipt(self):
         for record in self:
             
-           if record.picking_type_id and 'receipts' in record.picking_type_id.name.lower():
+           if record.picking_type_id and record.picking_type_code == 'incoming':
                 for move_lines in record.move_line_ids:
                     location_dest_id = move_lines.location_dest_id
                     
@@ -2555,7 +2555,7 @@ class transfer_locations(models.Model):
     @api.onchange('result_package_id')
     def _onchange_pallet_receipt(self):
         for record in self:
-            if record.picking_type_id and 'receipts' in record.picking_type_id.name.lower():
+            if record.picking_type_id and record.picking_type_code == 'incoming':
                 for move_lines in record.move_line_ids:
                     if move_lines.result_package_id:
                         move_lines.result_package_id.x_studio_is_reserved = False
