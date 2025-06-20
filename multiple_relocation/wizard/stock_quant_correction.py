@@ -119,6 +119,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'result_package_id': quant.package_id.id if quant.package_id else False,
             'reference': self._format_changes_reference(changes, original_state),
             'x_studio_pallet_series_id': quant.x_studio_pallet_series_id,
+            'is_quant_detail_adjusted': True,
             'state': 'done',
         }
         

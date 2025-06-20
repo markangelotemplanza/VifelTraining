@@ -12,7 +12,7 @@ from odoo.osv.expression import AND, OR
 from odoo.tools.float_utils import float_compare, float_is_zero, float_round
 from collections import defaultdict
 _logger = logging.getLogger(__name__)
-
+from ast import literal_eval
 class multiple_relocation(models.TransientModel):
     _inherit = 'stock.quant.relocate'
 
@@ -96,7 +96,7 @@ class stock_move_line_Override(models.Model):
     is_blast_freeze = fields.Boolean(related="picking_id.x_studio_is_a_blast_freezer", string="Is a Blast Freeze Transaction")
     computed_quant_id = fields.Many2one('stock.quant', string="quant_id", compute="_computed_computed_quant_id")
     is_return = fields.Boolean(string="Is a Return")
-
+    is_quant_detail_adjusted = fields.Boolean(string="Quant Details Edited")
     is_package_multiple_withdraw = fields.Boolean(
         string="Is Package In Multiple Transfers",
         compute="_compute_is_package_multiple_withdraw",
@@ -104,7 +104,18 @@ class stock_move_line_Override(models.Model):
     )
     reserved_quantity_on_validation = fields.Float(string="Reserved Quantity on Validation")
 
-    
+
+    @api.constrains('lot_id', 'product_id')
+    def _check_lot_product(self):
+
+        return
+        # for line in self:
+        #     if line.lot_id and line.product_id != line.lot_id.sudo().product_id:
+        #         raise ValidationError(_(
+        #             'This lot %(lot_name)s is incompatible with this product %(product_name)s',
+        #             lot_name=line.lot_id.name,
+        #             product_name=line.product_id.display_name
+        #         ))
 
     @api.constrains('x_studio_2nd_uom', 'x_studio_total_units', 'x_studio_actual_min', 'x_studio_actual_packaging')
     def _check_whole_numbers(self):
@@ -1127,7 +1138,28 @@ class OverrideStockQuant(models.Model):
     #         'target': 'current',
     #     }
 
-    
+
+    def action_view_stock_moves(self):
+        self.ensure_one()
+        action = self.env["ir.actions.actions"]._for_xml_id("stock.stock_move_line_action")
+        action['domain'] = [
+            '&', '&',
+                '|',
+                    ('location_id', '=', self.location_id.id),
+                    ('location_dest_id', '=', self.location_id.id),
+                ('x_studio_pallet_series_id', '=', self.x_studio_pallet_series_id),
+                # ('is_quant_detail_adjusted', '=', True),
+        ]
+        if self.package_id:
+            action['domain'] += [
+                '|',
+                    ('package_id', '=', self.package_id.id),
+                    ('result_package_id', '=', self.package_id.id),
+            ]
+        action['context'] = literal_eval(action.get('context'))
+        action['context']['search_default_product_id'] = self.product_id.id
+        return action
+        
     def create_transfer_stock_move(self, picking_id, records):
         picking = self.env['stock.picking'].browse(picking_id)
         if not picking:
