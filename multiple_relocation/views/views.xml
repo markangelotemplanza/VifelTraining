@@ -860,6 +860,13 @@
       <xpath expr="//form[1]/sheet[1]/notebook[1]/page[@name='operations']/field[@name='move_ids_without_package']/tree[1]/field[@name='quantity']" position="attributes">
         <attribute name="string">Actual Weight (KG)</attribute>
       </xpath>
+
+      <xpath expr="//button[@name='action_cancel']" position="attributes">
+        <attribute name="invisible">state not in ["assigned", "confirmed", "draft", "waiting", "done"] or 1</attribute>
+      </xpath>
+      <xpath expr="//field[@name='x_studio_truck_time']" position="attributes">
+        <attribute name="invisible">picking_type_code == "outgoing" and x_studio_is_a_blast_freezer == True</attribute>
+      </xpath>
     </field>
   </record>
 
