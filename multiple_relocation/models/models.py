@@ -1149,6 +1149,7 @@ class OverrideStockQuant(models.Model):
             #         ('location_id', '=', self.location_id.id),
             #         ('location_dest_id', '=', self.location_id.id),
                 ('x_studio_pallet_series_id', '=', self.x_studio_pallet_series_id),
+                ('lot_id', '=', self.lot_id.id),
                 # ('is_quant_detail_adjusted', '=', True),
         ]
         if self.package_id:
