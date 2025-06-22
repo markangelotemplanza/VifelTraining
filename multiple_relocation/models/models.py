@@ -1730,9 +1730,7 @@ class transfer_locations(models.Model):
     copy=False
 )
 
-    
     other_reasons = fields.Char(string="Specific Reason for Return", readonly=True, copy=False)
-
 
     # @api.model
     def _get_max_days_back_config(self):
@@ -2469,7 +2467,7 @@ class transfer_locations(models.Model):
             'res_model': 'stock.quant',
             'view_id': self.env.ref('multiple_relocation.view_stock_quant_tree_custom_2').id,  # Specify the editable tree view
             'domain': domain,
-            'context': {'create': False, 'picking_id': self.id},
+            'context': {'create': False, 'picking_id': self.id, 'state': self.state},
         }
         
     
@@ -2952,5 +2950,21 @@ class ClientExpiryTable(models.Model):
 
 
 
+class ProductProduct(models.Model):
+    _inherit = 'product.product'
 
+    name = fields.Char(compute='_compute_name')
+
+    @api.depends('product_tmpl_id.name', 'product_template_attribute_value_ids')
+    def _compute_name(self):
+        for product in self:
+            template_name = product.product_tmpl_id.name or ''
+            variants = product.product_template_attribute_value_ids.mapped(
+                lambda v: f"{v.attribute_id.name}: {v.name}"
+            )
+            if variants:
+                name = f"({', '.join(variants)}) - {template_name}"
+            else:
+                name = template_name
+            product.name = name
 
