@@ -92,6 +92,7 @@ class stock_move_line_Override(models.Model):
         domain="[('category_id.name', '=', 'Warehouseman')]"
     )
 
+    is_relocation = fields.Boolean(string="Is Relocation")
     bf_pallet_char = fields.Char(string="Pallet # - Text", compute='_compute_bf_pallet_char', readonly=False, store=True) 
     is_blast_freeze = fields.Boolean(related="picking_id.x_studio_is_a_blast_freezer", string="Is a Blast Freeze Transaction")
     computed_quant_id = fields.Many2one('stock.quant', string="quant_id", compute="_computed_computed_quant_id")
@@ -1634,7 +1635,8 @@ class OverrideStockQuant(models.Model):
                 'owner_id': self.owner_id.id,
                 'warehouseman': warehouseman,
                 'x_relocate_batch': x_reloc_batch_number,
-                'x_studio_pallet_series_id': x_studio_pallet_series_id
+                'x_studio_pallet_series_id': x_studio_pallet_series_id,
+                'is_relocation': True if x_reloc_batch_number else False,
             })]
         }
 
@@ -2499,11 +2501,9 @@ class transfer_locations(models.Model):
                 
                 # Set the allowed product ids in Many2many format
                 record.allowed_product_ids = [(6, 0, allowed_product_ids.ids)]
-                
-                # If you want to inspect the allowed products, uncomment the following line
-                # raise UserError("Allowed Products: {}".format(allowed_product_ids))
+   
             else:
-                record.allowed_product_ids = self.env['product.product'].search([])
+                record.allowed_product_ids = self.env['product.product'].search([('sale_ok', '!=', False)])
             
     
         
