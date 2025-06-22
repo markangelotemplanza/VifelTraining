@@ -2203,7 +2203,7 @@ class transfer_locations(models.Model):
             
         }
     
-    def calculate_page_data(self, processed_moves, page_size=14):
+    def calculate_page_data(self, processed_moves, page_size=12):
         """
         Calculate pagination data for the processed moves
         """
