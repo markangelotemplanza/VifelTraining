@@ -51,6 +51,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
                 'x_studio_min_quantity_uom': quant.x_studio_min_quantity_uom.id,
                 'quantity': quant.quantity,
                 'lot_id': quant.lot_id.id,
+                'owner_id': quant.owner_id.id,
             })
         
         res['line_ids'] = [(0, 0, vals) for vals in line_vals]
@@ -120,6 +121,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'reference': self._format_changes_reference(changes, original_state),
             'x_studio_pallet_series_id': quant.x_studio_pallet_series_id,
             'is_quant_detail_adjusted': True,
+            'owner_id': quant.owner_id.id,
             'state': 'done',
         }
         
@@ -206,6 +208,7 @@ class StockQuantCorrectionLine(models.TransientModel):
     x_studio_quantity_uom = fields.Many2one('uom.uom', string='Quantity UOM')
     x_studio_total_units = fields.Float(string='Total Units')
     x_studio_min_quantity_uom = fields.Many2one('uom.uom', string='Min Quantity UOM')
+    owner_id = fields.Many2one('res.partner', string="Owner")
     quantity = fields.Float(string='Quantity')
     lot_id = fields.Many2one('stock.lot', string='Lot/Serial', readonly=True)
 
@@ -261,6 +264,7 @@ class StockQuantCorrectionLine(models.TransientModel):
             'x_studio_quantity_uom': ('x_studio_quantity_uom', lambda x: x.id if x else False),
             'x_studio_total_units': ('x_studio_total_units', float),
             'x_studio_min_quantity_uom': ('x_studio_min_quantity_uom', lambda x: x.id if x else False),
+            'owner_id': ('owner_id', lambda x: x.id if x else False),
             'quantity': ('quantity', float),
         }
         
