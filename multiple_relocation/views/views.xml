@@ -553,7 +553,7 @@
         <field name="truck_type" required="False" force_save="1" readonly="state == &quot;done&quot; and not x_studio_edit_record" invisible="picking_type_id in [47, 48]"/>
         <field name="x_studio_trucks_plate_" required="False" force_save="1" readonly="state == &quot;done&quot; and not x_studio_edit_record" invisible="picking_type_id in [47, 48]"/>
         <field name="x_studio_driver" force_save="1" readonly="state == &quot;done&quot; and not x_studio_edit_record" invisible="picking_type_id in [47, 48]"/>
-        <field name="x_studio_truck_time" force_save="1" readonly="state == &quot;done&quot; and not x_studio_edit_record" invisible="picking_type_id in [47, 48]"/>
+        <field name="x_studio_truck_time" force_save="1" readonly="state == &quot;done&quot; and not x_studio_edit_record" />
         <field name="x_studio_set_adjustment_series" invisible="True"/>
         <field name="x_studio_remarks" invisible="state != &quot;done&quot;" string="Record Remarks"/>
         <field name="x_studio_ncr_remarks" invisible="x_studio_has_discrepancy != True and x_studio_exp_warned != True or state == &quot;draft&quot;"/>
@@ -785,12 +785,12 @@
         <xpath expr="//field[@name='x_studio_truck_time']" position="move"/>
       </xpath>
       <xpath expr="//field[@name='x_studio_start_time']" position="attributes">
-        <attribute name="invisible">not x_studio_truck_time</attribute>
+        <!-- <attribute name="invisible">not x_studio_truck_time</attribute> -->
         <attribute name="required">True</attribute>
       </xpath>
       <xpath expr="//field[@name='x_studio_end_time']" position="attributes">
-        <attribute name="invisible">not x_studio_truck_time</attribute>
-        <attribute name="required">False</attribute>
+        <!-- <attribute name="invisible">not x_studio_truck_time</attribute> -->
+        <attribute name="required">True</attribute>
       </xpath>
       <xpath expr="//field[@name='x_studio_source']" position="attributes">
         <attribute name="required">True</attribute>
