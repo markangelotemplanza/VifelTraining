@@ -99,6 +99,9 @@
         <field name="inherit_id" ref="stock.view_move_line_tree"/>
         <field name="arch" type="xml">
 
+        <xpath expr="//field[@name='lot_id']" position="attributes">
+            <attribute name="optional">hide</attribute>
+        </xpath>
           <xpath expr="//field[@name='date']" position="after">
             <field name="is_blast_freeze" optional="show"/>
           </xpath>
@@ -1169,6 +1172,41 @@
                 <field name="product_id"/>
                 <field name="x_relocate_batch"/>
                 <field name="warehouseman"/>
+                <field name="lot_id" optional="hide" groups="stock.group_production_lot"/>
+                <field name="x_studio_pallet_series_id"/>
+                <field name="package_id" optional="show" groups="stock.group_tracking_lot" string="From Pallet #"/>
+                <field name="result_package_id" optional="show" groups="stock.group_tracking_lot" string="To Pallet #"/>
+                <field name="location_id"/>
+                <field name="location_dest_id"/>
+                <field name="picking_partner_id" optional="hide"/>
+                <field name="company_id" optional="hide" groups="base.group_multi_company" force_save="1"/>
+                <field name="quantity" string="Quantity"
+                    decoration-danger="(location_usage in ('internal','transit')) and (location_dest_usage not in ('internal','transit'))"
+                    decoration-success="(location_usage not in ('internal','transit')) and (location_dest_usage in ('internal','transit'))"/>
+                <field name="product_uom_id" options="{'no_open': True, 'no_create': True}" string="Unit" groups="uom.group_uom"/>
+                <field name="state" widget='badge' optional="show"
+                       decoration-danger="state=='cancel'"
+                       decoration-info="state== 'assigned'"
+                       decoration-muted="state == 'draft'"
+                       decoration-success="state == 'done'"
+                       decoration-warning="state not in ('draft','cancel','done','assigned')"/>
+                <field name="create_uid" string="Done By" widget="many2one_avatar_user" optional="hide"/>
+            </tree>
+        </field>
+    </record>
+    
+    <record id="view_move_line_tree_custom_history" model="ir.ui.view">
+        <field name="name">stock.move.line.tree</field>
+        <field name="model">stock.move.line</field>
+        <field name="arch" type="xml">
+            <tree string="Move Lines" create="0" default_order="id desc" action="action_open_reference" type="object" duplicate="0" >
+                <field name="location_usage" column_invisible="True"/>
+                <field name="location_dest_usage" column_invisible="True"/>
+                <!-- <field name="x_studio_relocation_done"/> -->
+                <field name="date"/>
+                <field name="reference" string="Reference" column_invisible="context.get('no_reference', False)"/>
+                <field name="owner_id"/>
+                <field name="product_id"/>
                 <field name="lot_id" optional="hide" groups="stock.group_production_lot"/>
                 <field name="x_studio_pallet_series_id"/>
                 <field name="package_id" optional="show" groups="stock.group_tracking_lot" string="From Pallet #"/>

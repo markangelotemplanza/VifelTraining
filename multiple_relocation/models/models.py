@@ -13,6 +13,8 @@ from odoo.tools.float_utils import float_compare, float_is_zero, float_round
 from collections import defaultdict
 _logger = logging.getLogger(__name__)
 from ast import literal_eval
+
+
 class multiple_relocation(models.TransientModel):
     _inherit = 'stock.quant.relocate'
 
@@ -106,6 +108,48 @@ class stock_move_line_Override(models.Model):
     reserved_quantity_on_validation = fields.Float(string="Reserved Quantity on Validation")
 
 
+
+        
+    def build_adjustment_change_map(self, move_lines):
+        """
+        Build structured change data grouped by client (owner_id.name) and timestamp.
+        Returns:
+            dict: {
+                'Client A': {
+                    'MM/DD/YY HH:MM:SS': [
+                        {'field': 'Product', 'old_value': 'Apple', 'new_value': 'Orange'},
+                        ...
+                    ],
+                    ...
+                },
+                ...
+            }
+        """
+        result = defaultdict(lambda: defaultdict(list))
+    
+        move_lines = move_lines.filtered(lambda l: l.is_quant_detail_adjusted)
+    
+        for line in move_lines:
+            client = line.owner_id.name or 'Unknown'
+            ref = line.reference or ''
+            matches = re.findall(r'CORRECTION \(([\d/ :]+) by [^)]+\):\s*((?:\[[^\]]+\]\s*)+)', ref)
+    
+            for timestamp, changes_str in matches:
+                changes = re.findall(r'\[([^\]]+)\]', changes_str)
+                for change in changes:
+                    # Ex: "Product: Apple → Orange"
+                    if '→' in change:
+                        field, values = change.split(':', 1)
+                        old, new = [v.strip() for v in values.split('→', 1)]
+                        result[client][timestamp].append({
+                            'field': field.strip(),
+                            'old_value': old,
+                            'new_value': new,
+                        })
+    
+        return dict(result)
+
+        
     @api.constrains('lot_id', 'product_id')
     def _check_lot_product(self):
 
@@ -1018,149 +1062,47 @@ class OverrideStockQuant(models.Model):
         ]
     )
 
-    # def create_transfer_stock_move(self, picking_id, records):
-    #     picking = self.env['stock.picking'].browse(picking_id)
-    #     if not picking:
-    #         raise UserError("Picking not found.")
-    
-    #     StockMove = self.env['stock.move']
-    #     StockMoveLine = self.env['stock.move.line']
-    #     ctx = self.env.context
-    #     # **1. Validate package integrity**
-    #     selected_packages = {}
-    #     for quant in records:
-    #         if not quant.available_quantity:
-    #             continue
-    #         package_name = quant.package_id.name
-    #         if package_name:
-    #             selected_packages.setdefault(package_name, set()).add(quant.id)
-    
-    #     # For each package, check for missing quants
-    #     all_missing_quants = self.env['stock.quant']
-    #     Quant = self.env['stock.quant']
-        
-    #     for package_name, selected_quant_ids in selected_packages.items():
-    #         # Get all quants for this package
-    #         all_package_quants = Quant.search([
-    #             ('package_id', '=', package_name),
-    #             ('x_studio_pallet_series_id', '!=', False)
-    #         ])
-        
-    #         selected_quant_ids = selected_quant_ids or set()
-    #         all_package_quant_ids = set(all_package_quants.ids)
-    #         missing_ids = all_package_quant_ids - selected_quant_ids
-        
-    #         if missing_ids:
-    #             missing_quants = all_package_quants.filtered(lambda q: q.id in missing_ids)
-    #             all_missing_quants |= missing_quants
-        
-    #     if all_missing_quants:
-    #         if not ctx.get('ignore_missing_quants'):
-    #             return {
-    #                 'type': 'ir.actions.act_window',
-    #                 'res_model': 'wizard.partial.package.notice',
-    #                 'view_mode': 'form',
-    #                 'target': 'new',
-    #                 'context': {
-    #                     'default_picking_id': picking.id,
-    #                     'default_quant_ids': all_missing_quants.ids,
-    #                     'default_selected_quant_ids': [q.id for q in records],
-    #                 }
-    #             }
-    #         else:
-    #             records |= all_missing_quants
+    # def get_move_lines_with_changes(self):
+    #     for record in self:
+    #         domain = [
+    #             ('x_studio_pallet_series_id', '=', self.x_studio_pallet_series_id),
+    #             ('lot_id', '=', self.lot_id.id),
+    #             ('is_quant_detail_adjusted', '!=', False)
+    #         ]
+    #         if self.package_id:
+    #             domain += [
+    #                 '|',
+    #                     ('package_id', '=', self.package_id.id),
+    #                     ('result_package_id', '=', self.package_id.id),
+    #             ]
 
-    
-    #     # **2. Process Stock Moves**
-    #     grouped_data = {}
-    #     for quant in records:
-    #         product = quant.product_id
-    #         prod_id = product.id
-    #         if not quant.available_quantity:
-    #             continue
-    #         if prod_id not in grouped_data:
-    #             # Prepare move_vals; add 'automatically_added': True if ignore flag is set
-    #             move_vals = {
-    #                 'picking_id': picking.id,
-    #                 'product_id': prod_id,
-    #                 'name': product.display_name,
-    #                 'product_uom': quant.product_uom_id.id,
-    #                 'location_id': quant.location_id.id,
-    #                 'location_dest_id': picking.location_dest_id.id,
-    #                 'product_uom_qty': 0.0,
-    #             }
-    #             if ctx.get('ignore_missing_quants'):
-    #                 move_vals['automatically_added'] = True
-    
-    #             grouped_data[prod_id] = {
-    #                 'move_vals': move_vals,
-    #                 'total_qty': 0.0,
-    #                 'quant_ids': [],
-    #                 'move_line_vals': [],
-    #             }
-    
-    #         grouped_data[prod_id]['total_qty'] += quant.available_quantity
-    #         grouped_data[prod_id]['quant_ids'].append(quant.id)
-    
-    #         move_line_vals = {
-    #             'move_id': False,  # To be updated after creation
-    #             'picking_id': picking.id,
-    #             'product_id': prod_id,
-    #             'product_uom_id': quant.product_uom_id.id,
-    #             'quantity': quant.available_quantity,
-    #             'location_id': quant.location_id.id,
-    #             'location_dest_id': picking.location_dest_id.id,
-    #             'lot_id': quant.lot_id.id if quant.lot_id else False,
-    #             'package_id': quant.package_id.id if quant.package_id else False,
-    #             'result_package_id': False,
-    #             'owner_id': quant.owner_id.id if quant.owner_id else False,
-    #         }
-    #         grouped_data[prod_id]['move_line_vals'].append(move_line_vals)
-    
-    #     moves_by_product = {}
-    #     all_move_lines = []
-    
-    #     for prod_id, data in grouped_data.items():
-    #         data['move_vals']['product_uom_qty'] = data['total_qty']
-    #         move = StockMove.create(data['move_vals'])
-    #         moves_by_product[prod_id] = move
-    
-    #         move.write({'quant_ids_picked': [(4, q_id) for q_id in data['quant_ids']]})
-    
-    #         for ml_vals in data['move_line_vals']:
-    #             ml_vals['move_id'] = move.id
-    #         all_move_lines.extend(data['move_line_vals'])
-    
-    #     StockMoveLine.create(all_move_lines)
-    #     return {
-    #         'type': 'ir.actions.act_window',
-    #         'res_model': 'stock.picking',
-    #         'res_id': picking.id,
-    #         'view_mode': 'form',
-    #         'target': 'current',
-    #     }
-
-
+    #         return self.env['stock.move.line'].search(domain)
+            
     def action_view_stock_moves(self):
         self.ensure_one()
+        
         action = self.env["ir.actions.actions"]._for_xml_id("stock.stock_move_line_action")
-        action['domain'] = [
-            # '&', '&',
-            #     '|',
-            #         ('location_id', '=', self.location_id.id),
-            #         ('location_dest_id', '=', self.location_id.id),
-                ('x_studio_pallet_series_id', '=', self.x_studio_pallet_series_id),
-                ('lot_id', '=', self.lot_id.id),
-                # ('is_quant_detail_adjusted', '=', True),
+    
+        # Set domain
+        domain = [
+            ('x_studio_pallet_series_id', '=', self.x_studio_pallet_series_id),
+            ('lot_id', '=', self.lot_id.id),
         ]
         if self.package_id:
-            action['domain'] += [
+            domain += [
                 '|',
                     ('package_id', '=', self.package_id.id),
                     ('result_package_id', '=', self.package_id.id),
             ]
-        action['context'] = literal_eval(action.get('context'))
+        action['domain'] = domain
+    
+        # Set context
+        action['context'] = literal_eval(action.get('context') or '{}')
         action['context']['search_default_product_id'] = self.product_id.id
+    
+        # Force the use of custom tree view
+        action['views'] = [(self.env.ref('multiple_relocation.view_move_line_tree_custom_history').id, 'tree')]
+    
         return action
         
     def create_transfer_stock_move(self, picking_id, records):

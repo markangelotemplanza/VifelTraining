@@ -147,27 +147,30 @@ class StockQuantCorrectionWizard(models.TransientModel):
         else:
             return f"{len(changes)} fields updated"
 
+
     def _format_changes_reference(self, changes, original_state):
         """Format changes for reference field, including timestamp and user"""
         change_list = []
         for field, (old_val, new_val) in changes.items():
-            # For product changes, use the original product name
+            # For product changes, use original product name if available
             if field == 'product_id':
                 old_display = original_state.get('product_name', 'Unknown')
                 new_display = original_state.get('new_product_name', str(new_val))
             else:
-                # Format values for display
                 old_display = self._format_value_for_display(old_val)
                 new_display = self._format_value_for_display(new_val)
     
-            # Clean field name for display
+            # Clean and title-case field name
             display_field = field.replace('x_studio_', '').replace('_', ' ').title()
-            change_list.append(f"{display_field}: {old_display} → {new_display}")
     
-        # Format datetime and user
+            # Append formatted field change, wrapped in []
+            change_list.append(f"[{display_field}: {old_display} → {new_display}]")
+    
+        # Timestamp and user info
         timestamp = datetime.now().strftime('%m/%d/%y %H:%M:%S')
         user = self.env.user.name
-        return f"CORRECTION ({timestamp} by {user}): " + "; ".join(change_list)
+        return f"CORRECTION ({timestamp} by {user}): " + " ".join(change_list)
+
     
     def _format_value_for_display(self, value):
         """Format a value for display in reference"""
