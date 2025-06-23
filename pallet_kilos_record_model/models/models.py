@@ -41,8 +41,8 @@ class PalletKilosRecordModel(models.Model):
     units_withdrawn = fields.Float(string="Units Withdrawn", readonly=True, store=True)
 
     # Balance fields - stored, calculated via method calls
-    total_balance_in_units = fields.Float(store=True, string="Total Balance in Units", readonly=True, group_operator=False)
-    total_balance_in_packaging = fields.Float(store=True, string="Total Balance in Packaging", readonly=True, group_operator=False)
+    total_balance_in_units = fields.Float(store=True, string="Total Balance in Heads", readonly=True, group_operator=False)
+    total_balance_in_packaging = fields.Float(store=True, string="Total Balance in Quantity", readonly=True, group_operator=False)
     total_balance_in_kilos = fields.Float(store=True, string="Total Balance in Kilos (KG)", readonly=True, group_operator=False)
     total_balance_in_pallets = fields.Float(store=True, string="Total Balance in Pallets", readonly=True, group_operator=False)
 

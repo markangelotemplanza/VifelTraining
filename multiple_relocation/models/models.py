@@ -2940,7 +2940,7 @@ class ClientExpiryTable(models.Model):
 class ProductProduct(models.Model):
     _inherit = 'product.product'
 
-    name = fields.Char(compute='_compute_name')
+    name = fields.Char(compute='_compute_name', store=True)
 
     @api.depends('product_tmpl_id.name', 'product_template_attribute_value_ids')
     def _compute_name(self):
@@ -2950,7 +2950,7 @@ class ProductProduct(models.Model):
                 lambda v: f"{v.attribute_id.name}: {v.name}"
             )
             if variants:
-                name = f"({', '.join(variants)}) - {template_name}"
+                name = f"{template_name}-({', '.join(variants)})"
             else:
                 name = template_name
             product.name = name
