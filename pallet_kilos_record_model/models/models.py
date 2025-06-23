@@ -130,7 +130,7 @@ class PalletKilosRecordModel(models.Model):
                 kilos_withdrawn += line.quantity
 
             # Count unique pallets
-            if record.effective_document.picking_type_id.name in ['Delivery Orders']:
+            if record.effective_document.picking_type_code in ['outgoing']:
                 for move_line in record.effective_document.move_line_ids:
                     if move_line.picking_id.x_studio_is_a_blast_freezer:
                         if move_line.bf_pallet_char not in pallets:

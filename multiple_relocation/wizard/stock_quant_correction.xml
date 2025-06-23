@@ -16,6 +16,7 @@
                     <strong>Note:</strong> This wizard allows adjustments to <code>Pallet details</code>.
                     Please double-check your entries before confirming to ensure accuracy.
                 </div>
+
                     <div style="width: 100%; margin-top: 10px;">
                         <field name="line_ids" nolabel="1">
                             <tree editable="bottom" create="false" delete="false">
@@ -44,6 +45,12 @@
                             </tree>
                         </field>
                     </div>
+
+                <group>
+                    <field name="reason_for_adjustment" placeholder="Explain the reason for these pallet corrections..." nolabel="0" 
+                           widget="textarea"/>
+                </group>
+                    
                 </sheet>
             
                 <footer>

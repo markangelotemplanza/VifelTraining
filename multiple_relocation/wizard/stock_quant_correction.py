@@ -9,6 +9,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
     _description = 'Stock Quant Correction Wizard'
 
     line_ids = fields.One2many('stock.quant.correction.line', 'wizard_id', string='Quant Corrections')
+    reason_for_adjustment = fields.Char(string="Reason for Adjustment", required=True)
 
     def default_get(self, fields_list):
         res = super().default_get(fields_list)
@@ -59,7 +60,8 @@ class StockQuantCorrectionWizard(models.TransientModel):
 
     def action_confirm_corrections(self):
         """Process all corrections and create stock moves for history tracking"""
-        
+        adjustment_form_series = self.env['ir.sequence'].search([('code', '=', 'adjustment.form.series')], limit=1)
+        batch_number = adjustment_form_series.next_by_id()
         for line in self.line_ids:
             changes = line._get_changes()
             if changes:
@@ -71,11 +73,11 @@ class StockQuantCorrectionWizard(models.TransientModel):
                 
                 # Create stock move for history tracking AFTER updating the quant
                 # This ensures the move references the updated quant state
-                self._create_correction_move(line, changes, original_state)
+                self._create_correction_move(line, changes, original_state, batch_number, line.quant_id.x_studio_record_reference)
         
         return {'type': 'ir.actions.act_window_close'}
 
-    def _create_correction_move(self, line, changes, original_state):
+    def _create_correction_move(self, line, changes, original_state, batch_number, picking_id):
         """Create stock move to track the correction in history"""
         
         quant = line.quant_id
@@ -103,6 +105,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'location_dest_id': quant.location_id.id,
             'origin': 'Stock Quant Correction',
             'date': fields.Datetime.now(),
+
         }
         
         move = self.env['stock.move'].create(move_vals)
@@ -123,6 +126,8 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'is_quant_detail_adjusted': True,
             'owner_id': quant.owner_id.id,
             'state': 'done',
+            'adjustment_batch_number': batch_number,
+            'adjustment_reference_id': quant.x_studio_record_reference.id if quant.x_studio_record_reference else False
         }
         
         # Add custom fields to move line - use current values after correction

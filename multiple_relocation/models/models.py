@@ -94,6 +94,9 @@ class stock_move_line_Override(models.Model):
         domain="[('category_id.name', '=', 'Warehouseman')]"
     )
 
+    adjustment_batch_number = fields.Char(string="Adjustment Batch #")
+
+    adjustment_reference_id = fields.Many2one('stock.picking', string="Adjustment Referenced RR")
     is_relocation = fields.Boolean(string="Is Relocation")
     bf_pallet_char = fields.Char(string="Pallet # - Text", compute='_compute_bf_pallet_char', readonly=False, store=True) 
     is_blast_freeze = fields.Boolean(related="picking_id.x_studio_is_a_blast_freezer", string="Is a Blast Freeze Transaction")
@@ -112,25 +115,57 @@ class stock_move_line_Override(models.Model):
         
     def build_adjustment_change_map(self, move_lines):
         """
-        Build structured change data grouped by client (owner_id.name) and timestamp.
+        Build structured change data grouped by batch_number -> owner_id -> adjustment_reference_id -> timestamp.
         Returns:
             dict: {
-                'Client A': {
-                    'MM/DD/YY HH:MM:SS': [
-                        {'field': 'Product', 'old_value': 'Apple', 'new_value': 'Orange'},
+                'batch_001': {
+                    'Client A': {
+                        'REF001': {
+                            'reference_document_name': 'Reference Document Name',
+                            'timestamps': {
+                                'MM/DD/YY HH:MM:SS': [
+                                    {
+                                        'field': 'Product', 
+                                        'old_value': 'Apple', 
+                                        'new_value': 'Orange',
+                                        'pallet_series_id': 'PALLET123'
+                                    },
+                                    ...
+                                ],
+                                ...
+                            }
+                        },
                         ...
-                    ],
+                    },
                     ...
                 },
                 ...
             }
         """
-        result = defaultdict(lambda: defaultdict(list))
+        from collections import defaultdict
+        import re
+        
+        # Create nested defaultdict structure
+        result = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: {
+            'reference_document_name': '',
+            'timestamps': defaultdict(list)
+        })))
     
         move_lines = move_lines.filtered(lambda l: l.is_quant_detail_adjusted)
     
         for line in move_lines:
-            client = line.owner_id.name or 'Unknown'
+            # Get grouping keys
+            batch_number = line.adjustment_batch_number or 'Unknown Batch'
+            client = line.owner_id.name or 'Unknown Client'
+            reference_id = line.adjustment_reference_id.id if line.adjustment_reference_id else 'No Reference'
+            reference_name = line.adjustment_reference_id.name if line.adjustment_reference_id else 'No Reference Document'
+            pallet_series = line.x_studio_pallet_series_id or 'No Pallet'
+            
+            # Set reference document name (only needs to be set once per group)
+            if not result[batch_number][client][reference_id]['reference_document_name']:
+                result[batch_number][client][reference_id]['reference_document_name'] = reference_name
+            
+            # Parse reference field for changes
             ref = line.reference or ''
             matches = re.findall(r'CORRECTION \(([\d/ :]+) by [^)]+\):\s*((?:\[[^\]]+\]\s*)+)', ref)
     
@@ -141,13 +176,22 @@ class stock_move_line_Override(models.Model):
                     if '→' in change:
                         field, values = change.split(':', 1)
                         old, new = [v.strip() for v in values.split('→', 1)]
-                        result[client][timestamp].append({
+                        result[batch_number][client][reference_id]['timestamps'][timestamp].append({
                             'field': field.strip(),
                             'old_value': old,
                             'new_value': new,
+                            'pallet_series_id': pallet_series,
                         })
     
-        return dict(result)
+        # Convert defaultdicts to regular dicts for easier template handling
+        def convert_defaultdict(d):
+            if isinstance(d, defaultdict):
+                d = dict(d)
+                for key, value in d.items():
+                    d[key] = convert_defaultdict(value)
+            return d
+        
+        return convert_defaultdict(result)
 
         
     @api.constrains('lot_id', 'product_id')
@@ -332,19 +376,19 @@ class stock_move_line_Override(models.Model):
         
 
     
-    def write(self, vals):
-        # Call the super method
-        result = super(stock_move_line_Override, self).write(vals)
+    # def write(self, vals):
+    #     # Call the super method
+    #     result = super(stock_move_line_Override, self).write(vals)
 
-        for record in self:
-            # Ensure location_dest_id exists and check its child_ids
-            if record.location_dest_id and not record.location_dest_id.child_ids and record.picking_id.picking_type_code == 'incoming' and not record.location_dest_id.x_studio_is_an_aisle:
-                record.location_dest_id.write({
-                    'x_studio_is_reserved': True,
-                    'x_studio_receiving_report_id': record.picking_id.id
-                })
+    #     for record in self:
+    #         # Ensure location_dest_id exists and check its child_ids
+    #         if record.location_dest_id and not record.location_dest_id.child_ids and record.picking_id.picking_type_code == 'incoming' and not record.location_dest_id.x_studio_is_an_aisle:
+    #             record.location_dest_id.write({
+    #                 'x_studio_is_reserved': True,
+    #                 'x_studio_receiving_report_id': record.picking_id.id
+    #             })
         
-        return result
+    #     return result
         
 
     @api.onchange('location_dest_id')
