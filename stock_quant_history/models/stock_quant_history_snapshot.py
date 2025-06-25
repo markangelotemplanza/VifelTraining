@@ -3,7 +3,7 @@
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl.html).
 import logging
 from collections import defaultdict
-
+from odoo.exceptions import ValidationError, UserError
 from pytz import timezone
 
 from odoo import _, api, fields, models, tools
@@ -262,34 +262,35 @@ class StockQuantHistorySnapshot(models.Model):
                         ("location_id", "=", move_line.location_dest_id.id)
                     ], limit=1)
                     
-                    if related_quant:
+                    # if related_quant:
                         # Update the fields from the related quant
-                        quant_history[
-                            (move_line.product_id, move_line.lot_id, move_line.location_dest_id)
-                        ].write({
-                            "x_studio_record_reference": related_quant.x_studio_record_reference.id if related_quant.x_studio_record_reference else False,
-                            "x_studio_stock_code": related_quant.x_studio_stock_code or False,
-                            "x_studio_return_count": related_quant.x_studio_return_count or 0,
-                            "x_studio_pallet_series_id": related_quant.x_studio_pallet_series_id or False,
-                            "owner_id": related_quant.owner_id or False,
-                            "package_id": related_quant.package_id.id if related_quant.package_id else False,
-                            "x_studio_production_date": related_quant.x_studio_production_date or False,
-                            "x_studio_expiration_date": related_quant.x_studio_expiration_date or False,
-                            "x_studio_loading_dock_no": related_quant.x_studio_loading_dock_no or False,
-                            "x_studio_source": related_quant.x_studio_source or False,
-                            "x_studio_container_number": related_quant.x_studio_container_number or False,
-                            "x_studio_gate_pass": related_quant.x_studio_gate_pass or False,
-                            "x_studio_truck_time": related_quant.x_studio_truck_time or False,
-                            "x_studio_start_time": related_quant.x_studio_start_time or False,
-                            "x_studio_end_time": related_quant.x_studio_end_time or False,
-                            "x_studio_truck_number": related_quant.x_studio_truck_number or False,
-                            "x_studio_2nd_uom": related_quant.x_studio_2nd_uom or 0.0,
-                            "x_studio_quantity_uom": related_quant.x_studio_quantity_uom.id if related_quant.x_studio_quantity_uom else False,
-                            "x_studio_total_units": related_quant.x_studio_total_units or 0.0,
-                            "x_studio_min_quantity_uom": related_quant.x_studio_min_quantity_uom.id if related_quant.x_studio_min_quantity_uom else False,
-                            "x_studio_special_holding": related_quant.x_studio_special_holding if related_quant.x_studio_special_holding else False,
-                            "x_studio_sh_reason": related_quant.x_studio_sh_reason if related_quant.x_studio_sh_reason else ''
-                        })
+                    # raise UserError(move_line.result_package_id.name)
+                    quant_history[
+                        (move_line.product_id, move_line.lot_id, move_line.location_dest_id)
+                    ].write({
+                        "x_studio_record_reference": move_line.x_studio_record_reference.id if move_line.x_studio_record_reference else False,
+                        # "x_studio_stock_code": move_line.x_studio_stock_code or False,
+                        "x_studio_return_count": move_line.x_studio_return_count or 0,
+                        "x_studio_pallet_series_id": move_line.x_studio_pallet_series_id or False,
+                        "owner_id": move_line.owner_id or False,
+                        "package_id": move_line.result_package_id.id,
+                        "x_studio_production_date": move_line.x_studio_production_date or False,
+                        "x_studio_expiration_date": move_line.x_studio_expiration_date or False,
+                        "x_studio_loading_dock_no": move_line.x_studio_loading_dock_no or False,
+                        "x_studio_source": move_line.x_studio_source or False,
+                        "x_studio_container_number": move_line.x_studio_container_number or False,
+                        "x_studio_gate_pass": move_line.x_studio_gate_pass or False,
+                        "x_studio_truck_time": move_line.x_studio_truck_time or False,
+                        "x_studio_start_time": move_line.x_studio_start_time or False,
+                        "x_studio_end_time": move_line.x_studio_end_time or False,
+                        "x_studio_truck_number": move_line.x_studio_truck_number or False,
+                        "x_studio_2nd_uom": move_line.x_studio_2nd_uom or 0.0,
+                        "x_studio_quantity_uom": move_line.x_studio_quantity_uom.id if move_line.x_studio_quantity_uom else False,
+                        "x_studio_total_units": move_line.x_studio_total_units or 0.0,
+                        "x_studio_min_quantity_uom": move_line.x_studio_min_quantity_uom.id if move_line.x_studio_min_quantity_uom else False,
+                        "x_studio_special_holding": move_line.x_studio_special_holding if move_line.x_studio_special_holding else False,
+                        "x_studio_sh_reason": move_line.x_studio_sh_reason if move_line.x_studio_sh_reason else ''
+                    })
         
         # remove line with zero to save same disk space
         # avoid loop with direct SQL query

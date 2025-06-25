@@ -50,6 +50,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
                 'x_studio_quantity_uom': quant.x_studio_quantity_uom.id,
                 'x_studio_total_units': quant.x_studio_total_units,
                 'x_studio_min_quantity_uom': quant.x_studio_min_quantity_uom.id,
+                'x_studio_container_number': quant.x_studio_container_number,
                 'quantity': quant.quantity,
                 'lot_id': quant.lot_id.id,
                 'owner_id': quant.owner_id.id,
@@ -152,7 +153,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
         
         move = self.env['stock.move'].create(move_vals)
         
-        # Create corresponding move line
+        # Create corresponding move line with ALL quant details
         move_line_vals = {
             'move_id': move.id,
             'product_id': quant.product_id.id,
@@ -169,22 +170,23 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'adjustment_reference_id': quant.x_studio_record_reference.id if quant.x_studio_record_reference else False,
             'is_quant_detail_adjusted': True,
             'reference': self._format_quantity_change_reference(old_quantity, new_quantity),
-            # Copy custom fields from quant
+            # Copy ALL custom fields from quant - COMPLETE SET
             'x_studio_pallet_series_id': quant.x_studio_pallet_series_id,
             'x_studio_production_date': quant.x_studio_production_date,
             'x_studio_expiration_date': quant.x_studio_expiration_date,
-            # 'x_studio_loading_dock_no': quant.x_studio_loading_dock_no,
-            # 'x_studio_source': quant.x_studio_source,
-            # 'x_studio_gate_pass': quant.x_studio_gate_pass,
-            # 'x_studio_truck_time': quant.x_studio_truck_time,
-            # 'x_studio_start_time': quant.x_studio_start_time,
-            # 'x_studio_end_time': quant.x_studio_end_time,
-            # 'x_studio_truck_number': quant.x_studio_truck_number,
+            'x_studio_loading_dock_no': quant.x_studio_loading_dock_no,
+            'x_studio_source': quant.x_studio_source,
+            'x_studio_gate_pass': quant.x_studio_gate_pass,
+            'x_studio_truck_time': quant.x_studio_truck_time,
+            'x_studio_start_time': quant.x_studio_start_time,
+            'x_studio_end_time': quant.x_studio_end_time,
+            'x_studio_truck_number': quant.x_studio_truck_number,
             'x_studio_2nd_uom': quant.x_studio_2nd_uom,
             'x_studio_quantity_uom': quant.x_studio_quantity_uom.id if quant.x_studio_quantity_uom else False,
             'x_studio_total_units': quant.x_studio_total_units,
             'x_studio_min_quantity_uom': quant.x_studio_min_quantity_uom.id if quant.x_studio_min_quantity_uom else False,
             'x_studio_return_count': quant.x_studio_return_count,
+            'x_studio_container_number': quant.x_studio_container_number,
         }
         
         self.env['stock.move.line'].create(move_line_vals)
@@ -222,7 +224,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
         
         move = self.env['stock.move'].create(move_vals)
         
-        # Create stock move line with correction details using ORIGINAL state info
+        # Create stock move line with correction details using COMPLETE set of custom fields
         move_line_vals = {
             'move_id': move.id,
             'product_id': quant.product_id.id,  # Current product
@@ -232,18 +234,33 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'location_dest_id': quant.location_id.id,
             'lot_id': quant.lot_id.id if quant.lot_id else False,  # Current lot
             'package_id': quant.package_id.id if quant.package_id else False,
-            'x_studio_return_count': quant.x_studio_return_count if quant.x_studio_return_count else 0,
             'result_package_id': quant.package_id.id if quant.package_id else False,
             'reference': self._format_changes_reference(changes, original_state),
-            'x_studio_pallet_series_id': quant.x_studio_pallet_series_id,
             'is_quant_detail_adjusted': True,
-            'owner_id': quant.owner_id.id,
+            'owner_id': quant.owner_id.id if quant.owner_id else False,
             'state': 'done',
             'adjustment_batch_number': batch_number,
-            'adjustment_reference_id': quant.x_studio_record_reference.id if quant.x_studio_record_reference else False
+            'adjustment_reference_id': quant.x_studio_record_reference.id if quant.x_studio_record_reference else False,
+            # Copy ALL custom fields from quant - COMPLETE SET
+            'x_studio_pallet_series_id': quant.x_studio_pallet_series_id,
+            'x_studio_production_date': quant.x_studio_production_date,
+            'x_studio_expiration_date': quant.x_studio_expiration_date,
+            'x_studio_loading_dock_no': quant.x_studio_loading_dock_no,
+            'x_studio_source': quant.x_studio_source,
+            'x_studio_gate_pass': quant.x_studio_gate_pass,
+            'x_studio_truck_time': quant.x_studio_truck_time,
+            'x_studio_start_time': quant.x_studio_start_time,
+            'x_studio_end_time': quant.x_studio_end_time,
+            'x_studio_truck_number': quant.x_studio_truck_number,
+            'x_studio_2nd_uom': quant.x_studio_2nd_uom,
+            'x_studio_quantity_uom': quant.x_studio_quantity_uom.id if quant.x_studio_quantity_uom else False,
+            'x_studio_total_units': quant.x_studio_total_units,
+            'x_studio_min_quantity_uom': quant.x_studio_min_quantity_uom.id if quant.x_studio_min_quantity_uom else False,
+            'x_studio_return_count': quant.x_studio_return_count if quant.x_studio_return_count else 0,
+            'x_studio_container_number': quant.x_studio_container_number,
         }
         
-        # Add custom fields to move line - use current values after correction
+        # Override with current values after correction for fields that changed
         for field_name in changes.keys():
             if hasattr(self.env['stock.move.line'], field_name):
                 current_value = getattr(quant, field_name, False)
@@ -313,13 +330,6 @@ class StockQuantCorrectionWizard(models.TransientModel):
             return str(int(value))
         else:
             return str(value)
-        """Format a value for display in reference"""
-        if value is False or value is None:
-            return "Empty"
-        elif isinstance(value, (int, float)) and str(value).endswith('.0'):
-            return str(int(value))
-        else:
-            return str(value)
 
 
 class StockQuantCorrectionLine(models.TransientModel):
@@ -350,6 +360,7 @@ class StockQuantCorrectionLine(models.TransientModel):
     quantity = fields.Float(string='Quantity')
     lot_id = fields.Many2one('stock.lot', string='Lot/Serial', readonly=True)
     x_studio_return_count = fields.Integer(string="Return Count")
+    x_studio_container_number = fields.Char(string="Container #")
 
     
     @api.onchange('select_all')
@@ -406,7 +417,8 @@ class StockQuantCorrectionLine(models.TransientModel):
             'x_studio_min_quantity_uom': ('x_studio_min_quantity_uom', lambda x: x.id if x else False),
             'owner_id': ('owner_id', lambda x: x.id if x else False),
             'quantity': ('quantity', float),
-            'x_studio_return_count': ('x_studio_return_count', int)
+            'x_studio_return_count': ('x_studio_return_count', int),
+            'x_studio_container_number': ('x_studio_container_number', str),
         }
         
         for wizard_field, (quant_field, converter) in field_mapping.items():

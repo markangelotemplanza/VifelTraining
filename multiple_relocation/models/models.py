@@ -96,6 +96,18 @@ class stock_move_line_Override(models.Model):
 
     adjustment_batch_number = fields.Char(string="Adjustment Batch #")
 
+    x_studio_loading_dock_no = fields.Char(string="Loading Dock No.")
+    x_studio_source = fields.Char(string="Source")
+    x_studio_gate_pass = fields.Char(string="Source")
+
+    x_studio_truck_time = fields.Datetime(string="Truck Time")
+    x_studio_start_time = fields.Datetime(string="Start Time")
+    x_studio_end_time = fields.Datetime(string="End Time")
+    x_studio_truck_number = fields.Char(string="Truck's Plate")
+    x_studio_record_reference = fields.Char(string="Record Reference")
+    x_studio_container_number = fields.Char(string="Container #")
+    # x_studio_stock_code = fields.Char(string="Stock")
+    
     adjustment_reference_id = fields.Many2one('stock.picking', string="Adjustment Referenced RR")
     is_relocation = fields.Boolean(string="Is Relocation")
     bf_pallet_char = fields.Char(string="Pallet # - Text", compute='_compute_bf_pallet_char', readonly=False, store=True) 
