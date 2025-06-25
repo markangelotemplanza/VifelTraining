@@ -90,7 +90,7 @@ class StockQuantHistorySnapshot(models.Model):
             ("state", "=", "done"),
             ("date", "<=", self.inventory_date),
             ("product_id.type", "=", "product"),
-            ("is_quant_detail_adjusted", "=", False)
+            # ("is_quant_detail_adjusted", "=", False)
         ]
         if previous_quant_snapshot.exists():
             domain = AND(

@@ -79,8 +79,6 @@ class StockQuantCorrectionWizard(models.TransientModel):
             error_msg = "You cannot change product of Pallets already with return count history:\n\n"
             for series_id, pallet_refs in restricted_pallets.items():
                 error_msg += f"Series ID: {series_id}\n"
-                # for pallet_ref in pallet_refs:
-                #     error_msg += f"  - {pallet_ref}\n"
             raise UserError(error_msg)
         
         # Process all corrections if no restrictions found
@@ -90,17 +88,109 @@ class StockQuantCorrectionWizard(models.TransientModel):
                 # Store original quant state before changes
                 original_state = line._capture_original_state()
                 
-                # Update the quant first
+                # Handle quantity adjustments BEFORE applying other changes
+                if 'quantity' in changes:
+                    self._handle_quantity_adjustment(line, changes['quantity'][0], changes['quantity'][1], batch_number)
+                
+                # Update the quant with all changes
                 line._apply_changes(changes)
                 
-                # Create stock move for history tracking AFTER updating the quant
-                # This ensures the move references the updated quant state
-                self._create_correction_move(line, changes, original_state, batch_number, line.quant_id.x_studio_record_reference)
+                # Create stock move for non-quantity changes only
+                non_quantity_changes = {k: v for k, v in changes.items() if k != 'quantity'}
+                if non_quantity_changes:
+                    self._create_correction_move(line, non_quantity_changes, original_state, batch_number, line.quant_id.x_studio_record_reference)
         
         return {'type': 'ir.actions.act_window_close'}
 
+    def _handle_quantity_adjustment(self, line, old_quantity, new_quantity, batch_number):
+        """Handle quantity adjustments with proper inventory moves"""
+        quant = line.quant_id
+        quantity_diff = new_quantity - old_quantity
+        
+        # Get inventory adjustment location
+        inventory_location = self.env.ref('stock.location_inventory', raise_if_not_found=False)
+        if not inventory_location:
+            inventory_location = self.env['stock.location'].search([
+                ('usage', '=', 'inventory')
+            ], limit=1)
+            if not inventory_location:
+                raise UserError(_("Inventory location not found. Please configure inventory adjustments."))
+        
+        if abs(quantity_diff) < 0.001:  # No significant change
+            return
+        
+        # Create move for quantity adjustment
+        if quantity_diff > 0:
+            # Increase: Virtual Inventory → Current Location
+            source_location = inventory_location
+            dest_location = quant.location_id
+            move_quantity = quantity_diff
+            source_package = False
+            dest_package = quant.package_id.id if quant.package_id else False
+            move_name = f'Inventory Adjustment: +{quantity_diff} {quant.product_id.name}'
+        else:
+            # Decrease: Current Location → Virtual Inventory
+            source_location = quant.location_id
+            dest_location = inventory_location
+            move_quantity = abs(quantity_diff)
+            source_package = quant.package_id.id if quant.package_id else False
+            dest_package = False
+            move_name = f'Inventory Adjustment: -{abs(quantity_diff)} {quant.product_id.name}'
+        
+        # Create the adjustment move
+        move_vals = {
+            'name': move_name,
+            'product_id': quant.product_id.id,
+            'product_uom': quant.product_id.uom_id.id,
+            'product_uom_qty': move_quantity,
+            'location_id': source_location.id,
+            'location_dest_id': dest_location.id,
+            'origin': f'Quantity Adjustment - {self.reason_for_adjustment}',
+            'date': fields.Datetime.now(),
+            'state': 'done',
+        }
+        
+        move = self.env['stock.move'].create(move_vals)
+        
+        # Create corresponding move line
+        move_line_vals = {
+            'move_id': move.id,
+            'product_id': quant.product_id.id,
+            'product_uom_id': quant.product_id.uom_id.id,
+            'quantity': move_quantity,
+            'location_id': source_location.id,
+            'location_dest_id': dest_location.id,
+            'lot_id': quant.lot_id.id if quant.lot_id else False,
+            'package_id': source_package,
+            'result_package_id': dest_package,
+            'owner_id': quant.owner_id.id if quant.owner_id else False,
+            'state': 'done',
+            'adjustment_batch_number': batch_number,
+            'adjustment_reference_id': quant.x_studio_record_reference.id if quant.x_studio_record_reference else False,
+            'is_quant_detail_adjusted': True,
+            'reference': self._format_quantity_change_reference(old_quantity, new_quantity),
+            # Copy custom fields from quant
+            'x_studio_pallet_series_id': quant.x_studio_pallet_series_id,
+            'x_studio_production_date': quant.x_studio_production_date,
+            'x_studio_expiration_date': quant.x_studio_expiration_date,
+            # 'x_studio_loading_dock_no': quant.x_studio_loading_dock_no,
+            # 'x_studio_source': quant.x_studio_source,
+            # 'x_studio_gate_pass': quant.x_studio_gate_pass,
+            # 'x_studio_truck_time': quant.x_studio_truck_time,
+            # 'x_studio_start_time': quant.x_studio_start_time,
+            # 'x_studio_end_time': quant.x_studio_end_time,
+            # 'x_studio_truck_number': quant.x_studio_truck_number,
+            'x_studio_2nd_uom': quant.x_studio_2nd_uom,
+            'x_studio_quantity_uom': quant.x_studio_quantity_uom.id if quant.x_studio_quantity_uom else False,
+            'x_studio_total_units': quant.x_studio_total_units,
+            'x_studio_min_quantity_uom': quant.x_studio_min_quantity_uom.id if quant.x_studio_min_quantity_uom else False,
+            'x_studio_return_count': quant.x_studio_return_count,
+        }
+        
+        self.env['stock.move.line'].create(move_line_vals)
+
     def _create_correction_move(self, line, changes, original_state, batch_number, picking_id):
-        """Create stock move to track the correction in history"""
+        """Create stock move to track the correction in history (for non-quantity changes)"""
         
         quant = line.quant_id
         
@@ -122,12 +212,12 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'name': f'Correction: {original_state["product_name"]} - {correction_description}',
             'product_id': quant.product_id.id,  # Use current product after correction
             'product_uom': quant.product_id.uom_id.id,
-            'product_uom_qty': quant.quantity,
+            'product_uom_qty': 0,  # No actual quantity movement for field corrections
             'location_id': inventory_location.id,
             'location_dest_id': quant.location_id.id,
-            'origin': 'Stock Quant Correction',
+            'origin': f'Stock Quant Correction - {self.reason_for_adjustment}',
             'date': fields.Datetime.now(),
-
+            'state': 'done',
         }
         
         move = self.env['stock.move'].create(move_vals)
@@ -137,7 +227,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'move_id': move.id,
             'product_id': quant.product_id.id,  # Current product
             'product_uom_id': quant.product_id.uom_id.id,
-            'quantity': quant.quantity,
+            'quantity': 0,  # No actual quantity movement for field corrections
             'location_id': inventory_location.id,
             'location_dest_id': quant.location_id.id,
             'lot_id': quant.lot_id.id if quant.lot_id else False,  # Current lot
@@ -163,9 +253,6 @@ class StockQuantCorrectionWizard(models.TransientModel):
                     move_line_vals[field_name] = current_value
         
         move_line = self.env['stock.move.line'].create(move_line_vals)
-        
-        # Set move as done to make it appear in history
-        move.write({'state': 'done'})
         
         return move
 
@@ -204,7 +291,28 @@ class StockQuantCorrectionWizard(models.TransientModel):
         return f"CORRECTION ({timestamp} by {user}): " + " ".join(change_list)
 
     
+    def _format_quantity_change_reference(self, old_quantity, new_quantity):
+        """Format quantity change reference to match the same format as other corrections"""
+        # Timestamp in UTC+8 and user info
+        from datetime import datetime, timezone, timedelta
+        utc_plus_8 = timezone(timedelta(hours=8))
+        timestamp = datetime.now(utc_plus_8).strftime('%m/%d/%y %H:%M:%S')
+        user = self.env.user.name
+        
+        # Format the quantity change in the same style as other field changes
+        old_display = self._format_value_for_display(old_quantity)
+        new_display = self._format_value_for_display(new_quantity)
+        
+        return f"CORRECTION ({timestamp} by {user}): [Quantity: {old_display} → {new_display}]"
+    
     def _format_value_for_display(self, value):
+        """Format a value for display in reference"""
+        if value is False or value is None:
+            return "Empty"
+        elif isinstance(value, (int, float)) and str(value).endswith('.0'):
+            return str(int(value))
+        else:
+            return str(value)
         """Format a value for display in reference"""
         if value is False or value is None:
             return "Empty"
@@ -248,6 +356,7 @@ class StockQuantCorrectionLine(models.TransientModel):
     def _onchange_select_all(self):
         for line in self.line_ids:
             line.selected = self.select_all
+            
     def _capture_original_state(self):
         """Capture the original state of the quant before changes"""
         self.ensure_one()
