@@ -26,6 +26,7 @@
                                 <field name="owner_id"/>
                                 <!-- Editable fields -->
                                 <field name="product_id" required="1"/>
+                                <field name="x_studio_return_count" />
                                 <field name="package_id"/>
                                 <field name="x_studio_pallet_series_id"/>
                                 <field name="x_studio_production_date"/>
@@ -64,7 +65,7 @@
         
         <!-- Action for the wizard -->
         <record id="action_stock_quant_correction_wizard" model="ir.actions.act_window">
-            <field name="name">Correct Stock Quants</field>
+            <field name="name">Adjust Pallet Details</field>
             <field name="res_model">stock.quant.correction.wizard</field>
             <field name="view_mode">form</field>
             <field name="target">new</field>
@@ -81,7 +82,7 @@
                     <header>
                         <button name="action_stock_quant_relocate" string="Relocate" type="object" groups="stock.group_stock_manager" invisible="context.get('hide_location', False)" context="{'action_ref': 'stock.action_view_quants'}" class="btn-primary"/>
                         <button name="%(action_stock_quant_correction_wizard)d" 
-                                string="Correct Selected Quants" 
+                                string="Adjust Pallet Details" 
                                 type="action" 
                                 class="btn-primary"/>
                     </header>
@@ -99,7 +100,7 @@
             <field name="code">
 if records:
     action = {
-        'name': 'Correct Stock Quants',
+        'name': 'Adjust Pallet Details',
         'type': 'ir.actions.act_window',
         'res_model': 'stock.quant.correction.wizard',
         'view_mode': 'form',

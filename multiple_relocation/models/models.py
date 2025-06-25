@@ -1899,119 +1899,136 @@ class transfer_locations(models.Model):
                 _logger.warning("No pallet kilos record found for transfer: %s", record.name)
 
     
-        
+                
     def get_grouped_move_lines_for_report(self):
-            """
-            Preprocess move lines for report rendering.
-            Groups lines by item description key and marks which ones should display the description.
+        """
+        Preprocess move lines for report rendering.
+        Groups lines by item description key and marks which ones should display the description.
+        
+        Returns:
+            tuple: (processed_lines, grand_total_by_uom)
+            - processed_lines: List of dictionaries with processed move line data
+            - grand_total_by_uom: Dictionary with UOM totals for grand total
+        """
+        all_move_lines = []
+        
+        # Collect all move lines
+        for move in self.move_ids:
+            for line in move.move_line_ids:
+                all_move_lines.append(line)
+        
+        # Sort by product name (optional - adjust sorting as needed)
+        sorted_move_lines = sorted(all_move_lines, key=lambda l: l.product_id.name if l.product_id else '')
+        
+        processed_lines = []
+        seen_descriptions = set()
+        grand_total_by_uom = {}
+        
+        # First pass: determine if we have only one pallet and one product
+        unique_descriptions = set()
+        for line in sorted_move_lines:
+            move = line
+            product_name = line.product_id.display_name if line.product_id else ''
+            container_number = move.x_studio_container_number or ''
             
-            Returns:
-                tuple: (processed_lines, grand_total_by_uom)
-                - processed_lines: List of dictionaries with processed move line data
-                - grand_total_by_uom: Dictionary with UOM totals for grand total
-            """
-            all_move_lines = []
+            # Format dates
+            production_date = ''
+            if move.x_studio_production_date:
+                production_date = move.x_studio_production_date.strftime('%b%d.%Y').upper()
             
-            # Collect all move lines
-            for move in self.move_ids:
-                for line in move.move_line_ids:
-                    all_move_lines.append(line)
+            expiration_date = ''
+            if move.x_studio_expiration_date:
+                expiration_date = move.x_studio_expiration_date.strftime('%b%d.%Y').upper()
             
-            # Sort by product name (optional - adjust sorting as needed)
-            sorted_move_lines = sorted(all_move_lines, key=lambda l: l.product_id.name if l.product_id else '')
+            description_key = f"{product_name}|{container_number}|{production_date}|{expiration_date}"
+            unique_descriptions.add(description_key)
+        
+        # Check if we should hide details (only one pallet AND only one product)
+        is_single_pallet_single_product = len(unique_descriptions) == 1 and len(sorted_move_lines) == 1
+        
+        # Second pass: process lines
+        for line in sorted_move_lines:
+            move = line
             
-            processed_lines = []
-            seen_descriptions = set()
-            grand_total_by_uom = {}
-            unique_descriptions = []  # Track unique descriptions in order
+            # Create the description key for grouping
+            product_name = line.product_id.display_name if line.product_id else ''
+            container_number = move.x_studio_container_number or ''
             
-            for line in sorted_move_lines:
-                move = line
-                
-                # Create the description key for grouping
-                product_name = line.product_id.display_name if line.product_id else ''
-                container_number = move.x_studio_container_number or ''
-                
-                # Format dates
-                production_date = ''
-                if move.x_studio_production_date:
-                    production_date = move.x_studio_production_date.strftime('%b%d.%Y').upper()
-                
-                expiration_date = ''
-                if move.x_studio_expiration_date:
-                    expiration_date = move.x_studio_expiration_date.strftime('%b%d.%Y').upper()
-                
-                # Create the description key for grouping (used to determine uniqueness)
-                description_key = f"{product_name}|{container_number}|{production_date}|{expiration_date}"
-                
-                # Create the formatted description for display
-                description_parts = []
-                if product_name:
-                    description_parts.append(product_name)
-                if container_number:
-                    description_parts.append(container_number)
-                if production_date and expiration_date:
-                    description_parts.append(f"{production_date} - {expiration_date}")
-                elif production_date:
-                    description_parts.append(production_date)
-                elif expiration_date:
-                    description_parts.append(expiration_date)
-                
-                formatted_description = '<br/>'.join(description_parts)
-                
-                # Determine if we should show the description (first occurrence of this key)
+            # Format dates
+            production_date = ''
+            if move.x_studio_production_date:
+                production_date = move.x_studio_production_date.strftime('%b%d.%Y').upper()
+            
+            expiration_date = ''
+            if move.x_studio_expiration_date:
+                expiration_date = move.x_studio_expiration_date.strftime('%b%d.%Y').upper()
+            
+            # Create the description key for grouping (used to determine uniqueness)
+            description_key = f"{product_name}|{container_number}|{production_date}|{expiration_date}"
+            
+            # Create the formatted description for display
+            description_parts = []
+            if product_name:
+                description_parts.append(product_name)
+            if container_number:
+                description_parts.append(container_number)
+            if production_date and expiration_date:
+                description_parts.append(f"{production_date} - {expiration_date}")
+            elif production_date:
+                description_parts.append(production_date)
+            elif expiration_date:
+                description_parts.append(expiration_date)
+            
+            formatted_description = '<br/>'.join(description_parts)
+            
+            # Determine if we should show the description
+            # Show if: NOT (single pallet AND single product) AND first occurrence of this key
+            show_description = False
+            if not is_single_pallet_single_product:
                 show_description = description_key not in seen_descriptions
                 if show_description:
                     seen_descriptions.add(description_key)
-                    unique_descriptions.append(description_key)  # Track order of unique descriptions
-                
-                # Get UOM and quantity
-                uom = move.x_studio_quantity_uom.name if move and move.x_studio_quantity_uom else move.x_studio_quantity_uom_delivery.name
-                quantity = line.x_studio_2nd_uom or move.x_studio_affected_2nd_uom
-                
-                # Add to grand total by UOM
-                if uom:
-                    if uom not in grand_total_by_uom:
-                        grand_total_by_uom[uom] = 0
-                    grand_total_by_uom[uom] += quantity
-                
-                # Build pallet number with fallback logic
-                if line.package_id and not line.picking_id.x_studio_is_a_blast_freezer:
-                    pallet_no = f"{line.x_studio_pallet_series_id}/{line.package_id.name}/{line.x_studio_return_count}"
-                elif line.picking_id.x_studio_is_a_blast_freezer:
-                    pallet_no = line.bf_pallet_char
-                else:
-                    pallet_no = line.result_package_id.name if line.result_package_id else ''
-    
-                # Append processed line (removed pallet counting logic - will be done per page)
-                processed_lines.append({
-                    'pallet_no': pallet_no,
-                    'item_description': formatted_description,
-                    'show_description': show_description,
-                    'description_key': description_key,  # Add this for later identification
-                    'quantity': quantity,
-                    'uom': uom,
-                    'weight': line.quantity or 0,
-                    'weight_uom': line.product_uom_id.name if line.product_uom_id else '',
-                    'original_line': line  # Reference for any additional data
-                })
             
-            # Add "***Nothing Follows***" to the last occurrence of the last unique description
-            if unique_descriptions and processed_lines:
-                last_description_key = unique_descriptions[-1]
-                
-                # Find the last line with the last unique description and modify it
-                for i in range(len(processed_lines) - 1, -1, -1):
-                    if (processed_lines[i]['description_key'] == last_description_key and 
-                        processed_lines[i]['show_description']):
-                        processed_lines[i]['item_description'] += '<br/>***Nothing Follows***'
-                        break
-                
-                # Remove the description_key as it's no longer needed in the template
-                for line in processed_lines:
-                    del line['description_key']
+            # Get UOM and quantity
+            uom = move.x_studio_quantity_uom.name if move and move.x_studio_quantity_uom else move.x_studio_quantity_uom_delivery.name
+            quantity = line.x_studio_2nd_uom or move.x_studio_affected_2nd_uom
+            
+            # Add to grand total by UOM
+            if uom:
+                if uom not in grand_total_by_uom:
+                    grand_total_by_uom[uom] = 0
+                grand_total_by_uom[uom] += quantity
+            
+            # Build pallet number with fallback logic
+            if line.package_id and not line.picking_id.x_studio_is_a_blast_freezer:
+                pallet_no = f"{line.package_id.name}"
+            elif line.picking_id.x_studio_is_a_blast_freezer:
+                pallet_no = line.bf_pallet_char
+            else:
+                pallet_no = line.result_package_id.name if line.result_package_id else ''
     
-            return processed_lines, grand_total_by_uom
+            # Append processed line
+            processed_lines.append({
+                'pallet_no': pallet_no,
+                'item_description': formatted_description,
+                'show_description': show_description,
+                'description_key': description_key,  # Keep for new page logic
+                'quantity': quantity,
+                'uom': uom,
+                'weight': line.quantity or 0,
+                'weight_uom': line.product_uom_id.name if line.product_uom_id else '',
+                'original_line': line,  # Reference for any additional data
+                'is_new_page': False  # Flag for new page starts
+            })
+        
+        # Add "***Nothing Follows***" to the very last row after all pallets are rendered
+        if processed_lines:
+            # Set the last line to show only "***Nothing Follows***"
+            processed_lines[-1]['item_description'] = '***Nothing Follows***'
+            processed_lines[-1]['show_description'] = True
+            processed_lines[-1]['description_key'] = 'nothing_follows'
+    
+        return processed_lines, grand_total_by_uom
     
     def get_uom_totals_for_page(self, processed_lines, start_idx, end_idx):
         """
@@ -2102,6 +2119,7 @@ class transfer_locations(models.Model):
             # Dictionary to group move lines by unique SKU combination
             grouped_moves = defaultdict(lambda: {
                 'product_id': None,
+                'base_name': None,
                 'product_name': '',
                 'production_date': None,
                 'expiration_date': None,
@@ -2145,7 +2163,7 @@ class transfer_locations(models.Model):
                         # Build product name with dates
                         base_name = move.product_id.display_name or move.product_id.name
                         date_info = []
-                        
+                        grouped_moves[key]['sort_name'] = base_name
                         if prod_date:
                             date_info.append(f"{prod_date.strftime('%b').upper()}.{prod_date.day}.{prod_date.year}")
             
@@ -2207,7 +2225,7 @@ class transfer_locations(models.Model):
                 processed_moves.append(data)
             
             # Sort by product name for consistent ordering
-            processed_moves.sort(key=lambda x: x['product_name'])
+            processed_moves.sort(key=lambda x: x['sort_name'])
             
             # Add "***Nothing Follows***" to the last item's product_name
             if processed_moves:
@@ -2247,7 +2265,7 @@ class transfer_locations(models.Model):
             
         }
     
-    def calculate_page_data(self, processed_moves, page_size=12):
+    def calculate_page_data(self, processed_moves, page_size=15):
         """
         Calculate pagination data for the processed moves
         """
@@ -2447,6 +2465,7 @@ class transfer_locations(models.Model):
                 ('location_id', 'in', child_location_ids),  # Get all child locations, including self
                 ('owner_id', '=', self.partner_id.id if self.partner_id else False),
                 ('lot_id', 'not in', lot_ids),
+                ('quantity', '!=', 0),
                 ('package_id', '!=', False), ('lot_id', '!=', False), ('x_studio_record_reference', '!=', False), ('id', 'not in', self.move_line_ids.mapped('computed_quant_id.id'))]
 
         return {
@@ -2940,18 +2959,21 @@ class ClientExpiryTable(models.Model):
 class ProductProduct(models.Model):
     _inherit = 'product.product'
 
-    name = fields.Char(compute='_compute_name', store=True)
+    name = fields.Char(compute='_compute_name', store=True, readonly=False)
 
-    @api.depends('product_tmpl_id.name', 'product_template_attribute_value_ids')
+    
+    @api.depends('product_tmpl_id.name', 'product_template_attribute_value_ids.name', 'product_template_attribute_value_ids.attribute_id.name')
     def _compute_name(self):
         for product in self:
             template_name = product.product_tmpl_id.name or ''
-            variants = product.product_template_attribute_value_ids.mapped(
-                lambda v: f"{v.attribute_id.name}: {v.name}"
-            )
+            
+            variants = [
+                f"{v.attribute_id.name}: {v.name}"
+                for v in product.product_template_attribute_value_ids
+                if v.attribute_id and v.name
+            ]
             if variants:
-                name = f"{template_name}-({', '.join(variants)})"
+                product.name = f"{template_name} - ({', '.join(variants)})"
             else:
-                name = template_name
-            product.name = name
+                product.name = template_name
 

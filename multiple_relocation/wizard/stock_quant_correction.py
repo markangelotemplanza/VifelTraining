@@ -53,15 +53,37 @@ class StockQuantCorrectionWizard(models.TransientModel):
                 'quantity': quant.quantity,
                 'lot_id': quant.lot_id.id,
                 'owner_id': quant.owner_id.id,
+                'x_studio_return_count': quant.x_studio_return_count,
             })
         
         res['line_ids'] = [(0, 0, vals) for vals in line_vals]
         return res
-
+    
     def action_confirm_corrections(self):
         """Process all corrections and create stock moves for history tracking"""
         adjustment_form_series = self.env['ir.sequence'].search([('code', '=', 'adjustment.form.series')], limit=1)
         batch_number = adjustment_form_series.next_by_id()
+        
+        # First, accumulate all lines that have product_id changes and return count > 0
+        restricted_pallets = {}
+        for line in self.line_ids:
+            changes = line._get_changes()
+            if changes and 'product_id' in changes and line.quant_id.x_studio_return_count > 0:
+                series_id = line.quant_id.x_studio_pallet_series_id
+                if series_id not in restricted_pallets:
+                    restricted_pallets[series_id] = []
+                restricted_pallets[series_id].append(line.quant_id.x_studio_record_reference or f"Quant {line.quant_id.id}")
+        
+        # If we found any restricted pallets, raise error with the complete list
+        if restricted_pallets:
+            error_msg = "You cannot change product of Pallets already with return count history:\n\n"
+            for series_id, pallet_refs in restricted_pallets.items():
+                error_msg += f"Series ID: {series_id}\n"
+                # for pallet_ref in pallet_refs:
+                #     error_msg += f"  - {pallet_ref}\n"
+            raise UserError(error_msg)
+        
+        # Process all corrections if no restrictions found
         for line in self.line_ids:
             changes = line._get_changes()
             if changes:
@@ -120,6 +142,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'location_dest_id': quant.location_id.id,
             'lot_id': quant.lot_id.id if quant.lot_id else False,  # Current lot
             'package_id': quant.package_id.id if quant.package_id else False,
+            'x_studio_return_count': quant.x_studio_return_count if quant.x_studio_return_count else 0,
             'result_package_id': quant.package_id.id if quant.package_id else False,
             'reference': self._format_changes_reference(changes, original_state),
             'x_studio_pallet_series_id': quant.x_studio_pallet_series_id,
@@ -154,7 +177,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
         else:
             return f"{len(changes)} fields updated"
 
-
+    
     def _format_changes_reference(self, changes, original_state):
         """Format changes for reference field, including timestamp and user"""
         change_list = []
@@ -173,8 +196,10 @@ class StockQuantCorrectionWizard(models.TransientModel):
             # Append formatted field change, wrapped in []
             change_list.append(f"[{display_field}: {old_display} → {new_display}]")
     
-        # Timestamp and user info
-        timestamp = datetime.now().strftime('%m/%d/%y %H:%M:%S')
+        # Timestamp in UTC+8 and user info
+        from datetime import datetime, timezone, timedelta
+        utc_plus_8 = timezone(timedelta(hours=8))
+        timestamp = datetime.now(utc_plus_8).strftime('%m/%d/%y %H:%M:%S')
         user = self.env.user.name
         return f"CORRECTION ({timestamp} by {user}): " + " ".join(change_list)
 
@@ -216,6 +241,7 @@ class StockQuantCorrectionLine(models.TransientModel):
     owner_id = fields.Many2one('res.partner', string="Owner")
     quantity = fields.Float(string='Quantity')
     lot_id = fields.Many2one('stock.lot', string='Lot/Serial', readonly=True)
+    x_studio_return_count = fields.Integer(string="Return Count")
 
     
     @api.onchange('select_all')
@@ -271,6 +297,7 @@ class StockQuantCorrectionLine(models.TransientModel):
             'x_studio_min_quantity_uom': ('x_studio_min_quantity_uom', lambda x: x.id if x else False),
             'owner_id': ('owner_id', lambda x: x.id if x else False),
             'quantity': ('quantity', float),
+            'x_studio_return_count': ('x_studio_return_count', int)
         }
         
         for wizard_field, (quant_field, converter) in field_mapping.items():
