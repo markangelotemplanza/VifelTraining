@@ -249,18 +249,22 @@ class stock_move_line_Override(models.Model):
             else:
                 record.bf_pallet_char = ''
     
-    @api.depends('package_id')
+    @api.depends('package_id', 'result_package_id')
     def _compute_is_package_multiple_withdraw(self):
         for line in self:
+            # Skip computation if the record is not yet saved (i.e., has a temporary ID)
+            if not isinstance(line.id, int):
+                line.is_package_multiple_withdraw = False
+                continue
+    
             picking_id = line.picking_id
-
             is_blast_freeze, is_receiving = picking_id.operation_type_checker(picking_id.picking_type_id)
-
+    
             if not is_receiving and not is_blast_freeze:
-                if not line.package_id:
+                if not line.package_id or not isinstance(line.package_id.id, int):
                     line.is_package_multiple_withdraw = False
                     continue
-                    
+    
                 # Count how many active move lines use this package
                 package_count = self.env['stock.move.line'].search_count([
                     ('package_id', '=', line.package_id.id),
@@ -268,21 +272,26 @@ class stock_move_line_Override(models.Model):
                     ('id', '!=', line.id),  # Exclude self
                     ('picking_id', '!=', line.picking_id.id)
                 ])
-                
+    
                 line.is_package_multiple_withdraw = package_count > 0
-                
-            if is_receiving:
+    
+            elif is_receiving:
+                if not line.result_package_id or not isinstance(line.result_package_id.id, int):
+                    line.is_package_multiple_withdraw = False
+                    continue
+    
                 package_count = self.env['stock.move.line'].search_count([
                     ('result_package_id', '=', line.result_package_id.id),
-                    # ('state', 'not in', ['done', 'cancel']),
                     ('id', '!=', line.id),  # Exclude current line
                     ('picking_id', '=', line.picking_id.id)
                 ])
-
-                # raise UserError(package_count)
+    
                 line.is_package_multiple_withdraw = package_count > 0
+    
             elif is_blast_freeze:
                 line.is_package_multiple_withdraw = False
+
+    
     @api.depends('lot_id')
     def _computed_computed_quant_id(self):
         for record in self:
@@ -297,18 +306,6 @@ class stock_move_line_Override(models.Model):
         # Proceed with the deletion
         res = super(stock_move_line_Override, self).unlink()
 
-        
-        # for move in moves:
-        #     if move.picking_code == 'outgoing':
-        #         if move.quant_ids_picked:
-        #             # Get the quants that are still in move lines
-        #             quants_in_move_lines = move.move_line_ids.mapped('lot_id.quant_ids')
-        #             move.quant_ids_picked = [(6, 0, quants_in_move_lines.ids)]  # Sync with remaining move lines
-    
-        #         # Recompute product_uom_qty based on remaining move lines
-        #         move.product_uom_qty = sum(move.move_line_ids.mapped('quantity')) or 0
-
-        # return res
 
 
     
@@ -402,7 +399,6 @@ class stock_move_line_Override(models.Model):
         
     #     return result
         
-
     @api.onchange('location_dest_id')
     def unreserve_onchange_location(self):
         for record in self:
@@ -417,10 +413,11 @@ class stock_move_line_Override(models.Model):
                 unmatched_package = self._get_unmatched_ids(picking_id, 'result_package_id.id')
                 location = self.location_dest_id
                 
-                if not unmatched_locations and unmatched_package and not location.x_studio_is_an_aisle:
-                    raise UserError(f"Please set locations First")
+                if not unmatched_locations and unmatched_package and not location.x_studio_is_an_aisle and self.location_dest_id:
+                    # raise UserError(f"Please set locations First")
                     raise UserError(f"{self.location_dest_id.complete_name} can't have two or more pallets")
-                
+
+                # raise UserError(self_id)
                 if self_id:
                     # Check if others are still using the location
                     move_lines = self.env['stock.move.line'].search([
@@ -430,10 +427,10 @@ class stock_move_line_Override(models.Model):
                     ])
 
                     # Reserve the new location
-                    if not record.location_dest_id.child_ids or not record.location_dest_id.x_studio_receiving_report_id and record.picking_type_id and record.picking_type_code == 'incoming':
+                    if not record.location_dest_id.child_ids or not record.location_dest_id.x_studio_receiving_report_id and record.picking_type_id and record.picking_id.picking_type_code == 'incoming':
                         
                         if record.location_dest_id and not record.location_dest_id.child_ids and not record.location_dest_id.x_studio_is_an_aisle:
-                            
+                            # raise UserError("Eh")
                             record.location_dest_id.write({
                                 'x_studio_is_reserved': True,
                                 'x_studio_receiving_report_id': report_id,
@@ -442,13 +439,43 @@ class stock_move_line_Override(models.Model):
                         raise UserError("Oops, it seems like someone already reserved the location. Please select another location.")    
                         
                     # Remove reservation from previous location if no other moves are using it
+                    
                     if previous_location and not move_lines:
 
                         previous_location.write({
                             'x_studio_is_reserved': False,
                             'x_studio_receiving_report_id': False,
                         })
+                else:
+
+                    # Check if others are still using the location
+                    # move_lines = self.env['stock.move.line'].search([
+                    #     ('picking_id', '=', report_id), 
+                    #     # ('location_dest_id', '=', previous_location.id), 
+                    #     # ('id', '!=', self_id)
+                    # ])
+
+                    # Reserve the new location
+                    if not record.location_dest_id.child_ids or not record.location_dest_id.x_studio_receiving_report_id and record.picking_type_id and record.picking_id.picking_type_code == 'incoming':
+                        
+                        if record.location_dest_id and not record.location_dest_id.child_ids and not record.location_dest_id.x_studio_is_an_aisle:
+                            # raise UserError("Eh")
+                            record.location_dest_id.write({
+                                'x_studio_is_reserved': True,
+                                'x_studio_receiving_report_id': report_id,
+                            })
+                    else:
+                        raise UserError("Oops, it seems like someone already reserved the location. Please select another location.")    
+                        
+                    # Remove reservation from previous location if no other moves are using it
                     
+                    # if previous_location and not move_lines:
+
+                    #     previous_location.write({
+                    #         'x_studio_is_reserved': False,
+                    #         'x_studio_receiving_report_id': False,
+                    #     })
+
 
 
 
@@ -487,59 +514,7 @@ class stock_move_line_Override(models.Model):
                             'x_studio_is_reserved': False,
                             'x_studio_receiving_report_id': False,
                         })
-                
-
-    
-    
-    # def unreserve_ondelete_location(self):
-    #     # Get the picking_id from the first record (all should have the same picking_id)
-    #     picking_id = self[0].picking_id.id
-    #     owner = self[0].owner_id.name
-    
-    #     # Get all location_dest_id from selected records
-    #     selected_locations = self.mapped('location_dest_id.id')
-    #     # Get all location_dest_id from unselected move lines related to the same picking
-    #     unselected_locations = self.env['stock.move.line'].search([
-    #         ('picking_id', '=', picking_id),
-    #         ('id', 'not in', self.ids)
-    #     ]).mapped('location_dest_id.id')
-        
-    #     # Get all location_dest_id from selected records
-    #     selected_pallet_series = self.mapped('x_studio_pallet_series_id')
-    #     # Get all location_dest_id from unselected move lines related to the same picking
-    #     unselected_pallet_series = self.env['stock.move.line'].search([
-    #         ('picking_id', '=', picking_id),
-    #         ('id', 'not in', self.ids)
-    #     ]).mapped('x_studio_pallet_series_id')
-
-
-    #     raise UserError(selected_pallet_series)
-    #     # #store the pallet_series_id of the deleted lines to json-array
-    #     # for line in self:
-    #     #     if line.x_studio_pallet_series_id:
-    #     #         line.owner_id.push_unused_pallet(line.x_studio_pallet_series_id)
-
-    
-    #     # Find locations in selected that do not have a match in unselected
-    #     unmatched_locations = set(selected_locations) - set(unselected_locations)
-    #     # Only update locations if unmatched locations exist
-    #     if unmatched_locations:
-    #         self.env['stock.location'].browse(unmatched_locations).write({
-    #             'x_studio_is_reserved': False,
-    #             'x_studio_receiving_report_id': ''
-    #         })
-    
-    # @api.model
-    # def action_delete_selected(self, record):
-    #     # Get the selected move lines from the context
-    #     selected_move_lines = self.env['stock.move.line'].browse(self._context.get('active_ids'))
-        
-    #     # Perform any necessary checks (optional)
-    #     for move_line in selected_move_lines:
-    #         if move_line.state != 'done':  # Example check to ensure move line can be deleted
-    #             move_line.unlink()  # Delete the move line
-    #         else:
-    #             raise UserError(_('You cannot delete a move line in "done" state.'))
+ 
 
     @api.ondelete(at_uninstall=True)
     def unreserve_ondelete_location(self):
@@ -594,73 +569,6 @@ class stock_move_line_Override(models.Model):
         return unmatched_ids
 
 
-        # for record in self:
-        #     if record.product_id:
-        #         _logger.info(record._origin.location_dest_id.id)
-        #         previous_location = record._origin.location_dest_id if record._origin else None
-        #         report_id = record.picking_id.id
-
-        #         self_id = self.extract_id_from_newid(record.id)
-
-        #         if self_id:
-        #             # Check if others are still using the location
-        #             move_lines = self.env['stock.move.line'].search([
-        #                 ('picking_id', '=', report_id), 
-        #                 ('location_dest_id', '=', previous_location.id), 
-        #                 ('id', '!=', self_id)
-        #             ])
-
-        #             # raise UserError(previous_location.name)
-        #             # Remove reservation from previous location if no other moves are using it
-        #             if previous_location and not move_lines:
-        #                 previous_location.write({
-        #                     'x_studio_is_reserved': False,
-        #                     'x_studio_receiving_report_id': False,
-        #                 })
-        
-        #             # Reserve the new location
-        #             elif report_id == record.location_dest_id.x_studio_receiving_report_id.id or not record.location_dest_id.x_studio_receiving_report_id:
-        #                 if not record.location_dest_id.child_ids:
-        #                     record.location_dest_id.write({
-        #                         'x_studio_is_reserved': True,
-        #                         'x_studio_receiving_report_id': report_id,
-        #                     })
-        #             else:
-        #                 raise UserError("Oops, it seems like someone already reserved the location. Please select another location.")
-   
-    # @api.ondelete(at_uninstall=True)
-    # def unreserve_ondelete_pallet(self):
-    #     for record in self:
-    #         if record.product_id:
-    #             previous_pallet = record._origin.result_package_id if record._origin else None
-    #             report_id = record.picking_id.id
-
-    #             self_id = self.extract_id_from_newid(record.id)
-                
-    #             if self_id:
-    #                 # Check if others are still using the pallet
-    #                 move_lines = self.env['stock.move.line'].search([
-    #                     ('picking_id', '=', report_id), 
-    #                     ('result_package_id', '=', previous_pallet.id), 
-    #                     ('id', '!=', self_id)
-    #                 ])
-        
-    #                 # Remove reservation from previous pallet if no other moves are using it
-    #                 if previous_pallet and not move_lines:
-    #                     previous_pallet.write({
-    #                         'x_studio_is_reserved': False,
-    #                         'x_studio_receiving_report_id': False,
-    #                     })
-                    
-    #                 # Reserve the new pallet
-    #                 if report_id == record.result_package_id.x_studio_receiving_report_id.id or not record.result_package_id.x_studio_receiving_report_id:
-    #                     if record.result_package_id:
-    #                         record.result_package_id.write({
-    #                             'x_studio_is_reserved': True,
-    #                             'x_studio_receiving_report_id': report_id,
-    #                         })
-    #                 else:
-    #                     raise UserError("Oops, it seems like someone already reserved the pallet. Please select another pallet.")
                         
     def extract_id_from_newid(self, newid):
 
@@ -2009,7 +1917,7 @@ class transfer_locations(models.Model):
         unique_descriptions = set()
         for line in sorted_move_lines:
             move = line
-            product_name = line.product_id.display_name if line.product_id else ''
+            product_name = line.product_id.name if line.product_id else ''
             container_number = move.x_studio_container_number or ''
             
             # Format dates
@@ -2028,11 +1936,15 @@ class transfer_locations(models.Model):
         is_single_pallet_single_product = len(unique_descriptions) == 1 and len(sorted_move_lines) == 1
         
         # Second pass: process lines
-        for line in sorted_move_lines:
+        # Track seen descriptions per page
+        seen_descriptions_current_page = set()
+        items_per_page = 16  # Should match your XML template
+        
+        for line_index, line in enumerate(sorted_move_lines):
             move = line
             
             # Create the description key for grouping
-            product_name = line.product_id.display_name if line.product_id else ''
+            product_name = line.product_id.name if line.product_id else ''
             container_number = move.x_studio_container_number or ''
             
             # Format dates
@@ -2062,13 +1974,20 @@ class transfer_locations(models.Model):
             
             formatted_description = '<br/>'.join(description_parts)
             
+            # Determine if this line should start a new page
+            # Check if we're at the beginning of a new page (except for the first line)
+            is_new_page = line_index > 0 and line_index % items_per_page == 0
+            
+            # If starting a new page, reset the seen descriptions for current page
+            if is_new_page:
+                seen_descriptions_current_page = set()
+            
             # Determine if we should show the description
-            # Show if: NOT (single pallet AND single product) AND first occurrence of this key
+            # Show if: first occurrence of this key on current page OR starting a new page
             show_description = False
-            if not is_single_pallet_single_product:
-                show_description = description_key not in seen_descriptions
-                if show_description:
-                    seen_descriptions.add(description_key)
+            if description_key not in seen_descriptions_current_page or is_new_page:
+                show_description = True
+                seen_descriptions_current_page.add(description_key)
             
             # Get UOM and quantity
             uom = move.x_studio_quantity_uom.name if move and move.x_studio_quantity_uom else move.x_studio_quantity_uom_delivery.name
@@ -2099,15 +2018,26 @@ class transfer_locations(models.Model):
                 'weight': line.quantity or 0,
                 'weight_uom': line.product_uom_id.name if line.product_uom_id else '',
                 'original_line': line,  # Reference for any additional data
-                'is_new_page': False  # Flag for new page starts
+                'is_new_page': is_new_page  # Flag for new page starts
             })
         
         # Add "***Nothing Follows***" to the very last row after all pallets are rendered
         if processed_lines:
-            # Set the last line to show only "***Nothing Follows***"
-            processed_lines[-1]['item_description'] = '***Nothing Follows***'
-            processed_lines[-1]['show_description'] = True
-            processed_lines[-1]['description_key'] = 'nothing_follows'
+            # Always add "Nothing Follows" as a separate line to preserve product details
+            last_line = processed_lines[-1].copy()
+            
+            # Create the "Nothing Follows" line
+            nothing_follows_line = last_line.copy()
+            nothing_follows_line['item_description'] = '***Nothing Follows***'
+            nothing_follows_line['show_description'] = True
+            nothing_follows_line['description_key'] = 'nothing_follows'
+            nothing_follows_line['pallet_no'] = ''  # Clear pallet number for "Nothing Follows"
+            nothing_follows_line['quantity'] = 0
+            nothing_follows_line['weight'] = 0
+            nothing_follows_line['uom'] = ''
+            nothing_follows_line['weight_uom'] = ''
+            
+            processed_lines.append(nothing_follows_line)
     
         return processed_lines, grand_total_by_uom
     
@@ -2242,7 +2172,7 @@ class transfer_locations(models.Model):
                         grouped_moves[key]['product_id'] = move.product_id
                         
                         # Build product name with dates
-                        base_name = move.product_id.display_name or move.product_id.name
+                        base_name = move.product_id.name or move.product_id.name
                         date_info = []
                         grouped_moves[key]['sort_name'] = base_name
                         if prod_date:
