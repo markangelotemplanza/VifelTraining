@@ -51,6 +51,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
                 'x_studio_total_units': quant.x_studio_total_units,
                 'x_studio_min_quantity_uom': quant.x_studio_min_quantity_uom.id,
                 'x_studio_container_number': quant.x_studio_container_number,
+                'x_studio_building_dropped': quant.x_studio_building_dropped,
                 'quantity': quant.quantity,
                 'lot_id': quant.lot_id.id,
                 'owner_id': quant.owner_id.id,
@@ -187,6 +188,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'x_studio_min_quantity_uom': quant.x_studio_min_quantity_uom.id if quant.x_studio_min_quantity_uom else False,
             'x_studio_return_count': quant.x_studio_return_count,
             'x_studio_container_number': quant.x_studio_container_number,
+            'x_studio_building_dropped': quant.x_studio_building_dropped,
         }
         
         self.env['stock.move.line'].create(move_line_vals)
@@ -236,6 +238,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'package_id': quant.package_id.id if quant.package_id else False,
             'result_package_id': quant.package_id.id if quant.package_id else False,
             'reference': self._format_changes_reference(changes, original_state),
+            'x_studio_reason_for_adjustment': self.reason_for_adjustment,
             'is_quant_detail_adjusted': True,
             'owner_id': quant.owner_id.id if quant.owner_id else False,
             'state': 'done',
@@ -258,6 +261,7 @@ class StockQuantCorrectionWizard(models.TransientModel):
             'x_studio_min_quantity_uom': quant.x_studio_min_quantity_uom.id if quant.x_studio_min_quantity_uom else False,
             'x_studio_return_count': quant.x_studio_return_count if quant.x_studio_return_count else 0,
             'x_studio_container_number': quant.x_studio_container_number,
+            'x_studio_building_dropped': quant.x_studio_building_dropped,
         }
         
         # Override with current values after correction for fields that changed
@@ -361,7 +365,7 @@ class StockQuantCorrectionLine(models.TransientModel):
     lot_id = fields.Many2one('stock.lot', string='Lot/Serial', readonly=True)
     x_studio_return_count = fields.Integer(string="Return Count")
     x_studio_container_number = fields.Char(string="Container #")
-
+    x_studio_building_dropped = fields.Char(string="Building RR")
     
     @api.onchange('select_all')
     def _onchange_select_all(self):
@@ -419,6 +423,7 @@ class StockQuantCorrectionLine(models.TransientModel):
             'quantity': ('quantity', float),
             'x_studio_return_count': ('x_studio_return_count', int),
             'x_studio_container_number': ('x_studio_container_number', str),
+            'x_studio_building_dropped': ('x_studio_building_dropped', str)
         }
         
         for wizard_field, (quant_field, converter) in field_mapping.items():

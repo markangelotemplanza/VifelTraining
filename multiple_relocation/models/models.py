@@ -96,6 +96,7 @@ class stock_move_line_Override(models.Model):
 
     adjustment_batch_number = fields.Char(string="Adjustment Batch #")
 
+    x_studio_reason_for_adjustment = fields.Char(string="Reason for Adjustment")
     x_studio_loading_dock_no = fields.Char(string="Loading Dock No.")
     x_studio_source = fields.Char(string="Source")
     x_studio_gate_pass = fields.Char(string="Source")
@@ -106,7 +107,9 @@ class stock_move_line_Override(models.Model):
     x_studio_truck_number = fields.Char(string="Truck's Plate")
     x_studio_record_reference = fields.Char(string="Record Reference")
     x_studio_container_number = fields.Char(string="Container #")
-    # x_studio_stock_code = fields.Char(string="Stock")
+    
+    x_studio_building_dropped = fields.Char(string="Building", compute="_compute_x_studio_building_dropped", store=True)
+    
     
     adjustment_reference_id = fields.Many2one('stock.picking', string="Adjustment Referenced RR")
     is_relocation = fields.Boolean(string="Is Relocation")
@@ -123,8 +126,32 @@ class stock_move_line_Override(models.Model):
     reserved_quantity_on_validation = fields.Float(string="Reserved Quantity on Validation")
 
 
-
+    @api.depends('quant_id')
+    def _compute_x_studio_building_dropped(self):
+        for record in self:
+            if record['picking_code'] == 'outgoing' or not record['picking_code']:
+                location = self.env['stock.location'].browse(record['location_id'].id)
+                
+                for quants in location.quant_ids:
+                    if record.product_id.id == quants.product_id.id and record.owner_id == quants.owner_id and record.lot_id.id == quants.lot_id.id:
+                        record['x_studio_building_dropped'] = quants.x_studio_building_dropped
+                        
+                        
+            else:
+                record['x_studio_building_dropped'] = ''
         
+
+    def get_second_top_parent(self, location_path):
+        parts = location_path.split('/')
+        if len(parts) >= 2:
+            second_parent = parts[1]
+            if second_parent == 'M':
+                return 'M'
+            elif second_parent == 'A':
+                return 'A'
+        return ''
+
+    
     def build_adjustment_change_map(self, move_lines):
         """
         Build structured change data grouped by batch_number -> owner_id -> adjustment_reference_id -> timestamp.
@@ -1026,6 +1053,8 @@ class OverrideStockQuant(models.Model):
         ]
     )
 
+    x_studio_building_dropped = fields.Char(string="Building")
+    
     # def get_move_lines_with_changes(self):
     #     for record in self:
     #         domain = [

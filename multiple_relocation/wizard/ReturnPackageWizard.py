@@ -37,6 +37,7 @@ class ReturnPackageWizardLine(models.TransientModel):
     pallet_type = fields.Char(string="Pallet Type")
     warehouse_id = fields.Many2one('stock.warehouse')
     lot_id = fields.Many2one('stock.lot')
+    x_studio_building_dropped = fields.Char(string="Building")
 
     @api.onchange('pallet_series_id', 'product_id','pack_uom','min_uom')
     def onchange_fields(self):
@@ -138,6 +139,7 @@ class ReturnPackageWizard(models.TransientModel):
                             'bf_pallet_char': move_line.bf_pallet_char,
                             'product_id': move_line.product_id.id,
                             'expiration_date': move_line.x_studio_expiration_date,
+                            'x_studio_building_dropped': move_line.x_studio_building_dropped,
                             'production_date': move_line.x_studio_production_date,
                             'lot_id': move_line.lot_id.id,
                             'stock_move_line': move_line.id,
@@ -163,6 +165,7 @@ class ReturnPackageWizard(models.TransientModel):
                                 'bf_pallet_char': move_line.bf_pallet_char,
                                 'product_id': move_line.product_id.id,
                                 'expiration_date': move_line.x_studio_expiration_date,
+                                'x_studio_building_dropped': move_line.x_studio_building_dropped,
                                 'production_date': move_line.x_studio_production_date,
                                 'lot_id': move_line.lot_id.id,
                                 'stock_move_line': move_line.id,
@@ -343,6 +346,7 @@ class ReturnPackageWizard(models.TransientModel):
                     'is_return': True,
                     'picking_id': new_picking.id,
                     'x_studio_expiration_date': package.expiration_date,
+                    'x_studio_building_dropped': package.x_studio_building_dropped,
                     'x_studio_production_date': package.production_date,
                     'lot_id': package.lot_id.id,
                     'x_studio_return_count': package.return_counter if self.return_reason == 'Wrong Details Encoded' else package.return_counter + 1,
