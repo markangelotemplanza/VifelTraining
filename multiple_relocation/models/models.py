@@ -110,7 +110,7 @@ class stock_move_line_Override(models.Model):
     x_studio_container_number = fields.Char(string="Container #", compute="_compute_container_number", store=True)
     
     x_studio_building_dropped = fields.Char(string="Building", compute="_compute_x_studio_building_dropped", store=True)
-    
+    original_record_reference = fields.Many2one('stock.picking', compute="_compute_x_studio_building_dropped", store=True)
     
     adjustment_reference_id = fields.Many2one('stock.picking', string="Adjustment Referenced RR")
     is_relocation = fields.Boolean(string="Is Relocation")
@@ -151,10 +151,10 @@ class stock_move_line_Override(models.Model):
                 for quants in location.quant_ids:
                     if record.product_id.id == quants.product_id.id and record.owner_id == quants.owner_id and record.lot_id.id == quants.lot_id.id:
                         record['x_studio_building_dropped'] = quants.x_studio_building_dropped
-                        
-                        
+                        record['original_record_reference'] = quants.original_record_reference
             else:
                 record['x_studio_building_dropped'] = ''
+                record['original_record_reference'] = False
         
 
     def get_second_top_parent(self, location_path):
@@ -1070,6 +1070,7 @@ class OverrideStockQuant(models.Model):
     )
 
     x_studio_building_dropped = fields.Char(string="Building")
+    original_record_reference = fields.Many2one('stock.picking')
     
     # def get_move_lines_with_changes(self):
     #     for record in self:
@@ -2594,6 +2595,7 @@ class transfer_locations(models.Model):
                     ('package_id', '!=', False),
                     ('lot_id', '!=', False),
                     ('lot_id', 'not in', lot_ids),
+                    ('quantity', '!=', 0),
                     ('x_studio_record_reference', '!=', False),
                     ('id', 'not in', picking.move_line_ids.mapped('computed_quant_id.id'))
                 ]

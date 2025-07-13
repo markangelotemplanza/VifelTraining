@@ -79,7 +79,7 @@
                                 ('location_id.usage', '=', 'internal'),
                                 ('quantity', '>', 0),
                                 ('on_hand', '=', True),
-                                ('x_studio_pallet_series_id', '!=', False)]"
+                                ]"
                         context="{'tree_view_ref': 'multiple_relocation.view_stock_quant_tree_custom',
                                  'search_view_ref': 'multiple_relocation.view_stock_quant_search_custom'}"
                     >

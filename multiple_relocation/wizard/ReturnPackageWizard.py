@@ -36,7 +36,10 @@ class ReturnPackageWizardLine(models.TransientModel):
     picking_id = fields.Many2one('stock.picking')
     pallet_type = fields.Char(string="Pallet Type")
     warehouse_id = fields.Many2one('stock.warehouse')
-
+    lot_id = fields.Many2one('stock.lot')
+    x_studio_building_dropped = fields.Char(string="Building")
+    original_record_reference = fields.Many2one('stock.picking')
+    
     @api.onchange('pallet_series_id', 'product_id','pack_uom','min_uom')
     def onchange_fields(self):
         raise UserError("You cannot change values for this field")
@@ -46,6 +49,7 @@ class ReturnPackageWizardLine(models.TransientModel):
     def _compute_sync_issues(self):
         for line in self:
             # Check if pack uom has sync issue (reduced but others not reduced proportionally)
+            
             line.has_pack_sync_issue = (
                 line.pack_uom_unit < line.actual_pack_uom_unit and
                 line.pack_uom_unit == line.actual_pack_uom_unit and 
@@ -136,7 +140,10 @@ class ReturnPackageWizard(models.TransientModel):
                             'bf_pallet_char': move_line.bf_pallet_char,
                             'product_id': move_line.product_id.id,
                             'expiration_date': move_line.x_studio_expiration_date,
+                            'x_studio_building_dropped': move_line.x_studio_building_dropped,
+                            'original_record_reference': move_line.original_record_reference,
                             'production_date': move_line.x_studio_production_date,
+                            'lot_id': move_line.lot_id.id,
                             'stock_move_line': move_line.id,
                             'return_counter': move_line.x_studio_return_count,
                             'container_number': move_line.x_studio_container_number,
@@ -160,7 +167,10 @@ class ReturnPackageWizard(models.TransientModel):
                                 'bf_pallet_char': move_line.bf_pallet_char,
                                 'product_id': move_line.product_id.id,
                                 'expiration_date': move_line.x_studio_expiration_date,
+                                'x_studio_building_dropped': move_line.x_studio_building_dropped,
+                                'original_record_reference': move_line.original_record_reference,
                                 'production_date': move_line.x_studio_production_date,
+                                'lot_id': move_line.lot_id.id,
                                 'stock_move_line': move_line.id,
                                 'return_counter': move_line.x_studio_return_count,
                                 'container_number': move_line.x_studio_container_number,
@@ -194,11 +204,12 @@ class ReturnPackageWizard(models.TransientModel):
                  'package_line_ids.actual_quantity')
     def _compute_sync_warnings(self):
         for wizard in self:
-            selected_packages = wizard.package_line_ids.filtered(lambda line: line.select_package)
+            selected_packages = wizard.package_line_ids
             warning_lines = []
             has_warnings = False
-            
+
             for record in selected_packages:
+                
                 if (record.pack_uom_unit < record.actual_pack_uom_unit or
                     record.min_uom_unit < record.actual_min_uom_unit or
                     record.quantity < record.actual_quantity):
@@ -240,8 +251,15 @@ class ReturnPackageWizard(models.TransientModel):
         if not self.picking_type_id:
             # Default to the picking type for Receipts if not specified
             warehouse_id = self.picking_id.picking_type_id.warehouse_id.id
-            self.picking_type_id = self.env['stock.picking.type'].search([('name', '=', "Receipts" if "Delivery Orders" in self.picking_id.picking_type_id.name else "Blast Freeze - IN"), ('warehouse_id', '=', warehouse_id)], limit=1)
+            self.picking_type_id = None
 
+        self.picking_type_id = self.env['stock.picking.type'].search([
+            ('code', '=', 'incoming'),
+            ('is_blast_freeze_operation', '=', self.picking_id.picking_type_id.is_blast_freeze_operation),
+            ('warehouse_id', '=', warehouse_id)
+        ], limit=1)
+
+                
         # Copy the picking record
         new_picking = self.picking_id.copy(default={
             'picking_type_id': self.picking_type_id.id,
@@ -328,9 +346,13 @@ class ReturnPackageWizard(models.TransientModel):
             # Update the additional fields after creation
             for package, move_line in zip(selected_packages, created_move_lines):
                 move_line.write({
+                    'is_return': True,
                     'picking_id': new_picking.id,
                     'x_studio_expiration_date': package.expiration_date,
+                    'x_studio_building_dropped': package.x_studio_building_dropped,
+                    'original_record_reference': package.original_record_reference,
                     'x_studio_production_date': package.production_date,
+                    'lot_id': package.lot_id.id,
                     'x_studio_return_count': package.return_counter if self.return_reason == 'Wrong Details Encoded' else package.return_counter + 1,
                     'x_studio_pallet_series_id': package.pallet_series_id,
                     'bf_pallet_char': package.bf_pallet_char,
