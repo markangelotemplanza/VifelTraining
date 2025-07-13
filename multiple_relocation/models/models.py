@@ -12,6 +12,8 @@ from odoo.osv.expression import AND, OR
 from odoo.tools.float_utils import float_compare, float_is_zero, float_round
 from collections import defaultdict
 _logger = logging.getLogger(__name__)
+from ast import literal_eval
+
 
 class multiple_relocation(models.TransientModel):
     _inherit = 'stock.quant.relocate'
@@ -32,7 +34,8 @@ class multiple_relocation(models.TransientModel):
         for quant in quanties:
             for line_quants in self.quant_ids:
                 if line_quants.x_studio_dest_relocation.id == quant.location_id.id and not quant.x_studio_dest_relocation.id and not line_quants.x_studio_dest_relocation.x_studio_is_an_aisle:
-                    raise UserError(f"Please assign a relocation location for the pallet {quant.package_id.name} first")
+                    # raise UserError(f"Please assign a relocation location for the pallet {quant.package_id.name} first")
+                    pass
 
         
         for quant in self.quant_ids:
@@ -92,11 +95,30 @@ class stock_move_line_Override(models.Model):
         domain="[('category_id.name', '=', 'Warehouseman')]"
     )
 
+    adjustment_batch_number = fields.Char(string="Adjustment Batch #")
+
+    x_studio_reason_for_adjustment = fields.Char(string="Reason for Adjustment")
+    x_studio_loading_dock_no = fields.Char(string="Loading Dock No.")
+    x_studio_source = fields.Char(string="Source")
+    x_studio_gate_pass = fields.Char(string="Source")
+
+    x_studio_truck_time = fields.Datetime(string="Truck Time")
+    x_studio_start_time = fields.Datetime(string="Start Time")
+    x_studio_end_time = fields.Datetime(string="End Time")
+    x_studio_truck_number = fields.Char(string="Truck's Plate")
+    x_studio_record_reference = fields.Char(string="Record Reference")
+    x_studio_container_number = fields.Char(string="Container #", compute="_compute_container_number", store=True)
+    
+    x_studio_building_dropped = fields.Char(string="Building", compute="_compute_x_studio_building_dropped", store=True)
+    
+    
+    adjustment_reference_id = fields.Many2one('stock.picking', string="Adjustment Referenced RR")
+    is_relocation = fields.Boolean(string="Is Relocation")
     bf_pallet_char = fields.Char(string="Pallet # - Text", compute='_compute_bf_pallet_char', readonly=False, store=True) 
     is_blast_freeze = fields.Boolean(related="picking_id.x_studio_is_a_blast_freezer", string="Is a Blast Freeze Transaction")
     computed_quant_id = fields.Many2one('stock.quant', string="quant_id", compute="_computed_computed_quant_id")
-
-
+    is_return = fields.Boolean(string="Is a Return")
+    is_quant_detail_adjusted = fields.Boolean(string="Quant Details Edited")
     is_package_multiple_withdraw = fields.Boolean(
         string="Is Package In Multiple Transfers",
         compute="_compute_is_package_multiple_withdraw",
@@ -104,7 +126,140 @@ class stock_move_line_Override(models.Model):
     )
     reserved_quantity_on_validation = fields.Float(string="Reserved Quantity on Validation")
 
+    @api.depends('quant_id')
+    def _compute_container_number(self):
+        for record in self:
+            if record['picking_code'] == 'outgoing' or not record['picking_code']:
+                location = self.env['stock.location'].browse(record['location_id'].id)
+                
+                for quants in location.quant_ids:
+                    if record.product_id.id == quants.product_id.id and record.owner_id == quants.owner_id and record.lot_id.id == quants.lot_id.id:
+                        record['x_studio_container_number'] = quants.x_studio_container_number
+                        
+                        
+            else:
+                record['x_studio_container_number'] = ''
     
+            
+
+    @api.depends('quant_id')
+    def _compute_x_studio_building_dropped(self):
+        for record in self:
+            if record['picking_code'] == 'outgoing' or not record['picking_code']:
+                location = self.env['stock.location'].browse(record['location_id'].id)
+                
+                for quants in location.quant_ids:
+                    if record.product_id.id == quants.product_id.id and record.owner_id == quants.owner_id and record.lot_id.id == quants.lot_id.id:
+                        record['x_studio_building_dropped'] = quants.x_studio_building_dropped
+                        
+                        
+            else:
+                record['x_studio_building_dropped'] = ''
+        
+
+    def get_second_top_parent(self, location_path):
+        parts = location_path.split('/')
+        if len(parts) >= 2:
+            second_parent = parts[1]
+            if second_parent == 'M':
+                return 'M'
+            elif second_parent == 'A':
+                return 'A'
+        return ''
+
+    
+    def build_adjustment_change_map(self, move_lines):
+        """
+        Build structured change data grouped by batch_number -> owner_id -> adjustment_reference_id -> timestamp.
+        Returns:
+            dict: {
+                'batch_001': {
+                    'Client A': {
+                        'REF001': {
+                            'reference_document_name': 'Reference Document Name',
+                            'timestamps': {
+                                'MM/DD/YY HH:MM:SS': [
+                                    {
+                                        'field': 'Product', 
+                                        'old_value': 'Apple', 
+                                        'new_value': 'Orange',
+                                        'pallet_series_id': 'PALLET123'
+                                    },
+                                    ...
+                                ],
+                                ...
+                            }
+                        },
+                        ...
+                    },
+                    ...
+                },
+                ...
+            }
+        """
+        from collections import defaultdict
+        import re
+        
+        # Create nested defaultdict structure
+        result = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: {
+            'reference_document_name': '',
+            'timestamps': defaultdict(list)
+        })))
+    
+        move_lines = move_lines.filtered(lambda l: l.is_quant_detail_adjusted)
+    
+        for line in move_lines:
+            # Get grouping keys
+            batch_number = line.adjustment_batch_number or 'Unknown Batch'
+            client = line.owner_id.name or 'Unknown Client'
+            reference_id = line.adjustment_reference_id.id if line.adjustment_reference_id else 'No Reference'
+            reference_name = line.adjustment_reference_id.name if line.adjustment_reference_id else 'No Reference Document'
+            pallet_series = line.x_studio_pallet_series_id or 'No Pallet'
+            
+            # Set reference document name (only needs to be set once per group)
+            if not result[batch_number][client][reference_id]['reference_document_name']:
+                result[batch_number][client][reference_id]['reference_document_name'] = reference_name
+            
+            # Parse reference field for changes
+            ref = line.reference or ''
+            matches = re.findall(r'CORRECTION \(([\d/ :]+) by [^)]+\):\s*((?:\[[^\]]+\]\s*)+)', ref)
+    
+            for timestamp, changes_str in matches:
+                changes = re.findall(r'\[([^\]]+)\]', changes_str)
+                for change in changes:
+                    # Ex: "Product: Apple → Orange"
+                    if '→' in change:
+                        field, values = change.split(':', 1)
+                        old, new = [v.strip() for v in values.split('→', 1)]
+                        result[batch_number][client][reference_id]['timestamps'][timestamp].append({
+                            'field': field.strip(),
+                            'old_value': old,
+                            'new_value': new,
+                            'pallet_series_id': pallet_series,
+                        })
+    
+        # Convert defaultdicts to regular dicts for easier template handling
+        def convert_defaultdict(d):
+            if isinstance(d, defaultdict):
+                d = dict(d)
+                for key, value in d.items():
+                    d[key] = convert_defaultdict(value)
+            return d
+        
+        return convert_defaultdict(result)
+
+        
+    @api.constrains('lot_id', 'product_id')
+    def _check_lot_product(self):
+
+        return
+        # for line in self:
+        #     if line.lot_id and line.product_id != line.lot_id.sudo().product_id:
+        #         raise ValidationError(_(
+        #             'This lot %(lot_name)s is incompatible with this product %(product_name)s',
+        #             lot_name=line.lot_id.name,
+        #             product_name=line.product_id.display_name
+        #         ))
 
     @api.constrains('x_studio_2nd_uom', 'x_studio_total_units', 'x_studio_actual_min', 'x_studio_actual_packaging')
     def _check_whole_numbers(self):
@@ -137,18 +292,22 @@ class stock_move_line_Override(models.Model):
             else:
                 record.bf_pallet_char = ''
     
-    @api.depends('package_id')
+    @api.depends('package_id', 'result_package_id')
     def _compute_is_package_multiple_withdraw(self):
         for line in self:
+            # Skip computation if the record is not yet saved (i.e., has a temporary ID)
+            if not isinstance(line.id, int):
+                line.is_package_multiple_withdraw = False
+                continue
+    
             picking_id = line.picking_id
-
             is_blast_freeze, is_receiving = picking_id.operation_type_checker(picking_id.picking_type_id)
-
+    
             if not is_receiving and not is_blast_freeze:
-                if not line.package_id:
+                if not line.package_id or not isinstance(line.package_id.id, int):
                     line.is_package_multiple_withdraw = False
                     continue
-                    
+    
                 # Count how many active move lines use this package
                 package_count = self.env['stock.move.line'].search_count([
                     ('package_id', '=', line.package_id.id),
@@ -156,19 +315,25 @@ class stock_move_line_Override(models.Model):
                     ('id', '!=', line.id),  # Exclude self
                     ('picking_id', '!=', line.picking_id.id)
                 ])
-                
+    
                 line.is_package_multiple_withdraw = package_count > 0
-                
-            if is_receiving:
+    
+            elif is_receiving:
+                if not line.result_package_id or not isinstance(line.result_package_id.id, int):
+                    line.is_package_multiple_withdraw = False
+                    continue
+    
                 package_count = self.env['stock.move.line'].search_count([
                     ('result_package_id', '=', line.result_package_id.id),
-                    # ('state', 'not in', ['done', 'cancel']),
                     ('id', '!=', line.id),  # Exclude current line
                     ('picking_id', '=', line.picking_id.id)
                 ])
-
-                # raise UserError(package_count)
+    
                 line.is_package_multiple_withdraw = package_count > 0
+    
+            elif is_blast_freeze:
+                line.is_package_multiple_withdraw = False
+
     
     @api.depends('lot_id')
     def _computed_computed_quant_id(self):
@@ -184,18 +349,6 @@ class stock_move_line_Override(models.Model):
         # Proceed with the deletion
         res = super(stock_move_line_Override, self).unlink()
 
-        
-        # for move in moves:
-        #     if move.picking_code == 'outgoing':
-        #         if move.quant_ids_picked:
-        #             # Get the quants that are still in move lines
-        #             quants_in_move_lines = move.move_line_ids.mapped('lot_id.quant_ids')
-        #             move.quant_ids_picked = [(6, 0, quants_in_move_lines.ids)]  # Sync with remaining move lines
-    
-        #         # Recompute product_uom_qty based on remaining move lines
-        #         move.product_uom_qty = sum(move.move_line_ids.mapped('quantity')) or 0
-
-        # return res
 
 
     
@@ -206,7 +359,7 @@ class stock_move_line_Override(models.Model):
         owner = self.owner_id.name
     
         for record in self:
-            if record.picking_type_id and 'receipts' in record.picking_type_id.name.lower() and record.result_package_id and record.product_id:
+            if record.picking_type_id and record.picking_id.picking_type_code == 'incoming' and record.result_package_id and record.product_id:
                 # Exclude the current record ID to avoid self-inclusion in search results
                 self_id = self.extract_id_from_newid(record.id)
                 previous_location = record._origin.location_dest_id
@@ -275,21 +428,20 @@ class stock_move_line_Override(models.Model):
         
 
     
-    def write(self, vals):
-        # Call the super method
-        result = super(stock_move_line_Override, self).write(vals)
+    # def write(self, vals):
+    #     # Call the super method
+    #     result = super(stock_move_line_Override, self).write(vals)
 
-        for record in self:
-            # Ensure location_dest_id exists and check its child_ids
-            if record.location_dest_id and not record.location_dest_id.child_ids and record.picking_type_id and 'receipts' in record.picking_type_id.name.lower() and not record.location_dest_id.x_studio_is_an_aisle:
-                record.location_dest_id.write({
-                    'x_studio_is_reserved': True,
-                    'x_studio_receiving_report_id': record.picking_id.id
-                })
+    #     for record in self:
+    #         # Ensure location_dest_id exists and check its child_ids
+    #         if record.location_dest_id and not record.location_dest_id.child_ids and record.picking_id.picking_type_code == 'incoming' and not record.location_dest_id.x_studio_is_an_aisle:
+    #             record.location_dest_id.write({
+    #                 'x_studio_is_reserved': True,
+    #                 'x_studio_receiving_report_id': record.picking_id.id
+    #             })
         
-        return result
+    #     return result
         
-
     @api.onchange('location_dest_id')
     def unreserve_onchange_location(self):
         for record in self:
@@ -304,10 +456,11 @@ class stock_move_line_Override(models.Model):
                 unmatched_package = self._get_unmatched_ids(picking_id, 'result_package_id.id')
                 location = self.location_dest_id
                 
-                if not unmatched_locations and unmatched_package and not location.x_studio_is_an_aisle:
-                    raise UserError(f"Please set locations First")
+                if not unmatched_locations and unmatched_package and not location.x_studio_is_an_aisle and self.location_dest_id:
+                    # raise UserError(f"Please set locations First")
                     raise UserError(f"{self.location_dest_id.complete_name} can't have two or more pallets")
-                
+
+                # raise UserError(self_id)
                 if self_id:
                     # Check if others are still using the location
                     move_lines = self.env['stock.move.line'].search([
@@ -317,10 +470,10 @@ class stock_move_line_Override(models.Model):
                     ])
 
                     # Reserve the new location
-                    if not record.location_dest_id.child_ids or not record.location_dest_id.x_studio_receiving_report_id and record.picking_type_id and 'receipts' in record.picking_type_id.name.lower():
+                    if not record.location_dest_id.child_ids or not record.location_dest_id.x_studio_receiving_report_id and record.picking_type_id and record.picking_id.picking_type_code == 'incoming':
                         
                         if record.location_dest_id and not record.location_dest_id.child_ids and not record.location_dest_id.x_studio_is_an_aisle:
-                            
+                            # raise UserError("Eh")
                             record.location_dest_id.write({
                                 'x_studio_is_reserved': True,
                                 'x_studio_receiving_report_id': report_id,
@@ -329,13 +482,43 @@ class stock_move_line_Override(models.Model):
                         raise UserError("Oops, it seems like someone already reserved the location. Please select another location.")    
                         
                     # Remove reservation from previous location if no other moves are using it
+                    
                     if previous_location and not move_lines:
 
                         previous_location.write({
                             'x_studio_is_reserved': False,
                             'x_studio_receiving_report_id': False,
                         })
+                else:
+
+                    # Check if others are still using the location
+                    # move_lines = self.env['stock.move.line'].search([
+                    #     ('picking_id', '=', report_id), 
+                    #     # ('location_dest_id', '=', previous_location.id), 
+                    #     # ('id', '!=', self_id)
+                    # ])
+
+                    # Reserve the new location
+                    if not record.location_dest_id.child_ids or not record.location_dest_id.x_studio_receiving_report_id and record.picking_type_id and record.picking_id.picking_type_code == 'incoming':
+                        
+                        if record.location_dest_id and not record.location_dest_id.child_ids and not record.location_dest_id.x_studio_is_an_aisle:
+                            # raise UserError("Eh")
+                            record.location_dest_id.write({
+                                'x_studio_is_reserved': True,
+                                'x_studio_receiving_report_id': report_id,
+                            })
+                    else:
+                        raise UserError("Oops, it seems like someone already reserved the location. Please select another location.")    
+                        
+                    # Remove reservation from previous location if no other moves are using it
                     
+                    # if previous_location and not move_lines:
+
+                    #     previous_location.write({
+                    #         'x_studio_is_reserved': False,
+                    #         'x_studio_receiving_report_id': False,
+                    #     })
+
 
 
 
@@ -359,7 +542,7 @@ class stock_move_line_Override(models.Model):
                     ])
 
                     # Reserve the new pallet
-                    if not record.result_package_id.x_studio_receiving_report_id or record.picking_id.id == record.result_package_id.x_studio_receiving_report_id.id and record.picking_type_id and 'receipts' in record.picking_type_id.name.lower() and not record.location_dest_id.x_studio_is_an_aisle:
+                    if not record.result_package_id.x_studio_receiving_report_id or record.picking_id.id == record.result_package_id.x_studio_receiving_report_id.id and record.picking_type_id and record.picking_id.picking_type_code == 'incoming' and not record.location_dest_id.x_studio_is_an_aisle:
                         if record.result_package_id:
                             record.result_package_id.write({
                                 'x_studio_is_reserved': True,
@@ -374,65 +557,13 @@ class stock_move_line_Override(models.Model):
                             'x_studio_is_reserved': False,
                             'x_studio_receiving_report_id': False,
                         })
-                
-
-    
-    
-    # def unreserve_ondelete_location(self):
-    #     # Get the picking_id from the first record (all should have the same picking_id)
-    #     picking_id = self[0].picking_id.id
-    #     owner = self[0].owner_id.name
-    
-    #     # Get all location_dest_id from selected records
-    #     selected_locations = self.mapped('location_dest_id.id')
-    #     # Get all location_dest_id from unselected move lines related to the same picking
-    #     unselected_locations = self.env['stock.move.line'].search([
-    #         ('picking_id', '=', picking_id),
-    #         ('id', 'not in', self.ids)
-    #     ]).mapped('location_dest_id.id')
-        
-    #     # Get all location_dest_id from selected records
-    #     selected_pallet_series = self.mapped('x_studio_pallet_series_id')
-    #     # Get all location_dest_id from unselected move lines related to the same picking
-    #     unselected_pallet_series = self.env['stock.move.line'].search([
-    #         ('picking_id', '=', picking_id),
-    #         ('id', 'not in', self.ids)
-    #     ]).mapped('x_studio_pallet_series_id')
-
-
-    #     raise UserError(selected_pallet_series)
-    #     # #store the pallet_series_id of the deleted lines to json-array
-    #     # for line in self:
-    #     #     if line.x_studio_pallet_series_id:
-    #     #         line.owner_id.push_unused_pallet(line.x_studio_pallet_series_id)
-
-    
-    #     # Find locations in selected that do not have a match in unselected
-    #     unmatched_locations = set(selected_locations) - set(unselected_locations)
-    #     # Only update locations if unmatched locations exist
-    #     if unmatched_locations:
-    #         self.env['stock.location'].browse(unmatched_locations).write({
-    #             'x_studio_is_reserved': False,
-    #             'x_studio_receiving_report_id': ''
-    #         })
-    
-    # @api.model
-    # def action_delete_selected(self, record):
-    #     # Get the selected move lines from the context
-    #     selected_move_lines = self.env['stock.move.line'].browse(self._context.get('active_ids'))
-        
-    #     # Perform any necessary checks (optional)
-    #     for move_line in selected_move_lines:
-    #         if move_line.state != 'done':  # Example check to ensure move line can be deleted
-    #             move_line.unlink()  # Delete the move line
-    #         else:
-    #             raise UserError(_('You cannot delete a move line in "done" state.'))
+ 
 
     @api.ondelete(at_uninstall=True)
     def unreserve_ondelete_location(self):
 
         # Get the picking_id from the first record (all should have the same picking_id)
-        if self[0].picking_type_id and self[0].picking_type_id.name.lower() == 'receipts':
+        if self[0].picking_type_id and self[0].picking_id.picking_type_code == 'incoming':
             
             picking_id = self[0].picking_id.id
             owner = self[0].owner_id.name
@@ -481,73 +612,6 @@ class stock_move_line_Override(models.Model):
         return unmatched_ids
 
 
-        # for record in self:
-        #     if record.product_id:
-        #         _logger.info(record._origin.location_dest_id.id)
-        #         previous_location = record._origin.location_dest_id if record._origin else None
-        #         report_id = record.picking_id.id
-
-        #         self_id = self.extract_id_from_newid(record.id)
-
-        #         if self_id:
-        #             # Check if others are still using the location
-        #             move_lines = self.env['stock.move.line'].search([
-        #                 ('picking_id', '=', report_id), 
-        #                 ('location_dest_id', '=', previous_location.id), 
-        #                 ('id', '!=', self_id)
-        #             ])
-
-        #             # raise UserError(previous_location.name)
-        #             # Remove reservation from previous location if no other moves are using it
-        #             if previous_location and not move_lines:
-        #                 previous_location.write({
-        #                     'x_studio_is_reserved': False,
-        #                     'x_studio_receiving_report_id': False,
-        #                 })
-        
-        #             # Reserve the new location
-        #             elif report_id == record.location_dest_id.x_studio_receiving_report_id.id or not record.location_dest_id.x_studio_receiving_report_id:
-        #                 if not record.location_dest_id.child_ids:
-        #                     record.location_dest_id.write({
-        #                         'x_studio_is_reserved': True,
-        #                         'x_studio_receiving_report_id': report_id,
-        #                     })
-        #             else:
-        #                 raise UserError("Oops, it seems like someone already reserved the location. Please select another location.")
-   
-    # @api.ondelete(at_uninstall=True)
-    # def unreserve_ondelete_pallet(self):
-    #     for record in self:
-    #         if record.product_id:
-    #             previous_pallet = record._origin.result_package_id if record._origin else None
-    #             report_id = record.picking_id.id
-
-    #             self_id = self.extract_id_from_newid(record.id)
-                
-    #             if self_id:
-    #                 # Check if others are still using the pallet
-    #                 move_lines = self.env['stock.move.line'].search([
-    #                     ('picking_id', '=', report_id), 
-    #                     ('result_package_id', '=', previous_pallet.id), 
-    #                     ('id', '!=', self_id)
-    #                 ])
-        
-    #                 # Remove reservation from previous pallet if no other moves are using it
-    #                 if previous_pallet and not move_lines:
-    #                     previous_pallet.write({
-    #                         'x_studio_is_reserved': False,
-    #                         'x_studio_receiving_report_id': False,
-    #                     })
-                    
-    #                 # Reserve the new pallet
-    #                 if report_id == record.result_package_id.x_studio_receiving_report_id.id or not record.result_package_id.x_studio_receiving_report_id:
-    #                     if record.result_package_id:
-    #                         record.result_package_id.write({
-    #                             'x_studio_is_reserved': True,
-    #                             'x_studio_receiving_report_id': report_id,
-    #                         })
-    #                 else:
-    #                     raise UserError("Oops, it seems like someone already reserved the pallet. Please select another pallet.")
                         
     def extract_id_from_newid(self, newid):
 
@@ -1005,129 +1069,120 @@ class OverrideStockQuant(models.Model):
         ]
     )
 
-    # def create_transfer_stock_move(self, picking_id, records):
-    #     picking = self.env['stock.picking'].browse(picking_id)
-    #     if not picking:
-    #         raise UserError("Picking not found.")
+    x_studio_building_dropped = fields.Char(string="Building")
     
-    #     StockMove = self.env['stock.move']
-    #     StockMoveLine = self.env['stock.move.line']
-    #     ctx = self.env.context
-    #     # **1. Validate package integrity**
-    #     selected_packages = {}
-    #     for quant in records:
-    #         if not quant.available_quantity:
-    #             continue
-    #         package_name = quant.package_id.name
-    #         if package_name:
-    #             selected_packages.setdefault(package_name, set()).add(quant.id)
-    
-    #     # For each package, check for missing quants
-    #     all_missing_quants = self.env['stock.quant']
-    #     Quant = self.env['stock.quant']
-        
-    #     for package_name, selected_quant_ids in selected_packages.items():
-    #         # Get all quants for this package
-    #         all_package_quants = Quant.search([
-    #             ('package_id', '=', package_name),
-    #             ('x_studio_pallet_series_id', '!=', False)
-    #         ])
-        
-    #         selected_quant_ids = selected_quant_ids or set()
-    #         all_package_quant_ids = set(all_package_quants.ids)
-    #         missing_ids = all_package_quant_ids - selected_quant_ids
-        
-    #         if missing_ids:
-    #             missing_quants = all_package_quants.filtered(lambda q: q.id in missing_ids)
-    #             all_missing_quants |= missing_quants
-        
-    #     if all_missing_quants:
-    #         if not ctx.get('ignore_missing_quants'):
-    #             return {
-    #                 'type': 'ir.actions.act_window',
-    #                 'res_model': 'wizard.partial.package.notice',
-    #                 'view_mode': 'form',
-    #                 'target': 'new',
-    #                 'context': {
-    #                     'default_picking_id': picking.id,
-    #                     'default_quant_ids': all_missing_quants.ids,
-    #                     'default_selected_quant_ids': [q.id for q in records],
-    #                 }
-    #             }
-    #         else:
-    #             records |= all_missing_quants
+    # def get_move_lines_with_changes(self):
+    #     for record in self:
+    #         domain = [
+    #             ('x_studio_pallet_series_id', '=', self.x_studio_pallet_series_id),
+    #             ('lot_id', '=', self.lot_id.id),
+    #             ('is_quant_detail_adjusted', '!=', False)
+    #         ]
+    #         if self.package_id:
+    #             domain += [
+    #                 '|',
+    #                     ('package_id', '=', self.package_id.id),
+    #                     ('result_package_id', '=', self.package_id.id),
+    #             ]
 
-    
-    #     # **2. Process Stock Moves**
-    #     grouped_data = {}
-    #     for quant in records:
-    #         product = quant.product_id
-    #         prod_id = product.id
-    #         if not quant.available_quantity:
-    #             continue
-    #         if prod_id not in grouped_data:
-    #             # Prepare move_vals; add 'automatically_added': True if ignore flag is set
-    #             move_vals = {
-    #                 'picking_id': picking.id,
-    #                 'product_id': prod_id,
-    #                 'name': product.display_name,
-    #                 'product_uom': quant.product_uom_id.id,
-    #                 'location_id': quant.location_id.id,
-    #                 'location_dest_id': picking.location_dest_id.id,
-    #                 'product_uom_qty': 0.0,
-    #             }
-    #             if ctx.get('ignore_missing_quants'):
-    #                 move_vals['automatically_added'] = True
-    
-    #             grouped_data[prod_id] = {
-    #                 'move_vals': move_vals,
-    #                 'total_qty': 0.0,
-    #                 'quant_ids': [],
-    #                 'move_line_vals': [],
-    #             }
-    
-    #         grouped_data[prod_id]['total_qty'] += quant.available_quantity
-    #         grouped_data[prod_id]['quant_ids'].append(quant.id)
-    
-    #         move_line_vals = {
-    #             'move_id': False,  # To be updated after creation
-    #             'picking_id': picking.id,
-    #             'product_id': prod_id,
-    #             'product_uom_id': quant.product_uom_id.id,
-    #             'quantity': quant.available_quantity,
-    #             'location_id': quant.location_id.id,
-    #             'location_dest_id': picking.location_dest_id.id,
-    #             'lot_id': quant.lot_id.id if quant.lot_id else False,
-    #             'package_id': quant.package_id.id if quant.package_id else False,
-    #             'result_package_id': False,
-    #             'owner_id': quant.owner_id.id if quant.owner_id else False,
-    #         }
-    #         grouped_data[prod_id]['move_line_vals'].append(move_line_vals)
-    
-    #     moves_by_product = {}
-    #     all_move_lines = []
-    
-    #     for prod_id, data in grouped_data.items():
-    #         data['move_vals']['product_uom_qty'] = data['total_qty']
-    #         move = StockMove.create(data['move_vals'])
-    #         moves_by_product[prod_id] = move
-    
-    #         move.write({'quant_ids_picked': [(4, q_id) for q_id in data['quant_ids']]})
-    
-    #         for ml_vals in data['move_line_vals']:
-    #             ml_vals['move_id'] = move.id
-    #         all_move_lines.extend(data['move_line_vals'])
-    
-    #     StockMoveLine.create(all_move_lines)
-    #     return {
-    #         'type': 'ir.actions.act_window',
-    #         'res_model': 'stock.picking',
-    #         'res_id': picking.id,
-    #         'view_mode': 'form',
-    #         'target': 'current',
-    #     }
+    #         return self.env['stock.move.line'].search(domain)
 
+
+
+    @api.model
+    def _update_available_quantity(self, product_id, location_id, quantity=False, reserved_quantity=False, lot_id=None, package_id=None, owner_id=None, in_date=None):
+        """ Increase or decrease `quantity` or 'reserved quantity' of a set of quants for a given set of
+        product_id/location_id/lot_id/package_id/owner_id.
+
+        :param product_id:
+        :param location_id:
+        :param quantity:
+        :param lot_id:
+        :param package_id:
+        :param owner_id:
+        :param datetime in_date: Should only be passed when calls to this method are done in
+                                 order to move a quant. When creating a tracked quant, the
+                                 current datetime will be used.
+        :return: tuple (available_quantity, in_date as a datetime)
+        """
+        # if not (quantity or reserved_quantity):
+        #     raise ValidationError(_('Quantity or Reserved Quantity should be set.'))
+        self = self.sudo()
+        quants = self._gather(product_id, location_id, lot_id=lot_id, package_id=package_id, owner_id=owner_id, strict=True)
+        if lot_id and quantity > 0:
+            quants = quants.filtered(lambda q: q.lot_id)
+
+        if location_id.should_bypass_reservation():
+            incoming_dates = []
+        else:
+            incoming_dates = [quant.in_date for quant in quants if quant.in_date and
+                              float_compare(quant.quantity, 0, precision_rounding=quant.product_uom_id.rounding) > 0]
+        if in_date:
+            incoming_dates += [in_date]
+        # If multiple incoming dates are available for a given lot_id/package_id/owner_id, we
+        # consider only the oldest one as being relevant.
+        if incoming_dates:
+            in_date = min(incoming_dates)
+        else:
+            in_date = fields.Datetime.now()
+
+        quant = None
+        if quants:
+            # see _acquire_one_job for explanations
+            self._cr.execute("SELECT id FROM stock_quant WHERE id IN %s ORDER BY lot_id LIMIT 1 FOR NO KEY UPDATE SKIP LOCKED", [tuple(quants.ids)])
+            stock_quant_result = self._cr.fetchone()
+            if stock_quant_result:
+                quant = self.browse(stock_quant_result[0])
+
+        if quant:
+            vals = {'in_date': in_date}
+            if quantity:
+                vals['quantity'] = quant.quantity + quantity
+            if reserved_quantity:
+                vals['reserved_quantity'] = quant.reserved_quantity + reserved_quantity
+            quant.write(vals)
+        else:
+            vals = {
+                'product_id': product_id.id,
+                'location_id': location_id.id,
+                'lot_id': lot_id and lot_id.id,
+                'package_id': package_id and package_id.id,
+                'owner_id': owner_id and owner_id.id,
+                'in_date': in_date,
+            }
+            if quantity:
+                vals['quantity'] = quantity
+            if reserved_quantity:
+                vals['reserved_quantity'] = reserved_quantity
+            self.create(vals)
+        return self._get_available_quantity(product_id, location_id, lot_id=lot_id, package_id=package_id, owner_id=owner_id, strict=True, allow_negative=True), in_date
+    def action_view_stock_moves(self):
+        self.ensure_one()
+        
+        action = self.env["ir.actions.actions"]._for_xml_id("stock.stock_move_line_action")
     
+        # Set domain
+        domain = [
+            ('x_studio_pallet_series_id', '=', self.x_studio_pallet_series_id),
+            ('lot_id', '=', self.lot_id.id),
+        ]
+        if self.package_id:
+            domain += [
+                '|',
+                    ('package_id', '=', self.package_id.id),
+                    ('result_package_id', '=', self.package_id.id),
+            ]
+        action['domain'] = domain
+    
+        # Set context
+        action['context'] = literal_eval(action.get('context') or '{}')
+        action['context']['search_default_product_id'] = self.product_id.id
+    
+        # Force the use of custom tree view
+        action['views'] = [(self.env.ref('multiple_relocation.view_move_line_tree_custom_history').id, 'tree')]
+    
+        return action
+        
     def create_transfer_stock_move(self, picking_id, records):
         picking = self.env['stock.picking'].browse(picking_id)
         if not picking:
@@ -1600,7 +1655,8 @@ class OverrideStockQuant(models.Model):
                 'owner_id': self.owner_id.id,
                 'warehouseman': warehouseman,
                 'x_relocate_batch': x_reloc_batch_number,
-                'x_studio_pallet_series_id': x_studio_pallet_series_id
+                'x_studio_pallet_series_id': x_studio_pallet_series_id,
+                'is_relocation': True if x_reloc_batch_number else False,
             })]
         }
 
@@ -1658,7 +1714,13 @@ class transfer_locations(models.Model):
 
     total_quantity = fields.Float(string="Total Quantity", compute="_compute_totals", store=True)
     total_weight = fields.Float(string="Total Weight (KG)", compute="_compute_totals", store=True)
-    
+
+    vifel_type_of_operation = fields.Selection(string="Operation Type", store=True, compute="_comupute_vifel_type_of_operation", selection=[
+        ('BFRR', 'BF RECEIVING'),
+        ('BFWR', 'BF WITHDRAWING'),
+        ('RR', 'RECEIVING'),
+        ('WR', 'WITHDRAWING'),
+    ])
     truck_type = fields.Selection(
         string="Truck Type",
         selection=[
@@ -1691,14 +1753,74 @@ class transfer_locations(models.Model):
     copy=False
 )
 
-    
     other_reasons = fields.Char(string="Specific Reason for Return", readonly=True, copy=False)
 
-
+    # @api.model
+    def _get_max_days_back_config(self):
+        """Get the maximum days back configuration from static variables"""
+        config = self.env['x_inventory_static_var'].search([
+            ('x_studio_use_case', '=', 'Date Constraints'),
+            ('x_name', 'ilike', 'Max Acceptable Truck Time / Start Time'),
+            ('x_studio_warehouse', '=', self.picking_type_id.warehouse_id.id)
+        ], limit=1)
+        
+        if config and config.x_studio_float_value:
+            return config.x_studio_float_value
+        else:
+            # Default to 7 days if no configuration found
+            return 7
+    
+    @api.constrains('x_studio_truck_time', 'x_studio_start_time', 'x_studio_end_time')
+    def _check_date_not_too_old(self):
+        """
+        Constraint to ensure truck_time, start_time, and end_time are not older 
+        than the configured maximum days back
+        """
+        max_days_back = self._get_max_days_back_config()
+        cutoff_datetime = datetime.now() - timedelta(days=max_days_back)
+        
+        for record in self:
+            # Check truck_time
+            if record.x_studio_truck_time and record.x_studio_truck_time < cutoff_datetime:
+                raise ValidationError(
+                    f"Truck Time cannot be more than {int(max_days_back)} days ago. "
+                    f"The earliest allowed date is {cutoff_datetime.strftime('%m/%d/%Y %H:%M:%S')}"
+                )
+            
+            # Check start_time
+            if record.x_studio_start_time and record.x_studio_start_time < cutoff_datetime:
+                raise ValidationError(
+                    f"Start Time cannot be more than {int(max_days_back)} days ago. "
+                    f"The earliest allowed date is {cutoff_datetime.strftime('%m/%d/%Y %H:%M:%S')}"
+                )
+            
+            # Check end_time
+            if record.x_studio_end_time and record.x_studio_end_time < cutoff_datetime:
+                raise ValidationError(
+                    f"End Time cannot be more than {int(max_days_back)} days ago. "
+                    f"The earliest allowed date is {cutoff_datetime.strftime('%m/%d/%Y %H:%M:%S')}"
+                )
     
     def operation_type_checker(self, operation_type_record):
         is_receiving = operation_type_record.code == 'incoming'
         return operation_type_record.is_blast_freeze_operation, is_receiving
+
+    @api.depends('picking_type_id')
+    def _comupute_vifel_type_of_operation(self):
+        for record in self:
+            is_blast_freeze, is_receiving = record.operation_type_checker(record.picking_type_id)
+
+            if not is_blast_freeze and is_receiving:
+                record.vifel_type_of_operation = 'RR'
+            elif not is_blast_freeze and not is_receiving:
+                record.vifel_type_of_operation = 'WR'
+            elif is_blast_freeze and is_receiving:
+                record.vifel_type_of_operation = 'BFRR'
+            elif is_blast_freeze and not is_receiving:
+                record.vifel_type_of_operation = 'BFWR'
+            else:
+                record.vifel_type_of_operation = 'RR'
+
     
     @api.depends('move_ids_without_package.quantity', 'move_ids_without_package.x_studio_actual_packaging_demand')
     def _compute_totals(self):
@@ -1711,15 +1833,16 @@ class transfer_locations(models.Model):
 
             record.total_quantity = total_quantity
             record.total_weight = total_weight
-        
+            
+    
     def void_transfer(self):
         """Mark transfer as voided and deactivate the latest associated pallet kilos record."""
         for record in self:
             if not self.env.user.has_group('multiple_relocation.inventory_super_admin'):
                 raise UserError(_("You do not have permission to void transfers."))
-
+    
             record.x_studio_voided = True
-
+    
             # Find the latest related pallet kilos record
             pallet_record = self.env['pallet_kilos_record_model.pallet_kilos_record_model'].search(
                 [('effective_document', '=', record.id), ('active', '=', True)],
@@ -1727,40 +1850,31 @@ class transfer_locations(models.Model):
                 limit=1
             )
             
-            
             if pallet_record:
-                if pallet_record.readjustment_document.id == record.id:
+                # Store data needed for recalculation before deactivating
+                warehouse_id = pallet_record.warehouse.id
+                is_blast_freezer = pallet_record.is_blast_freezer
+                start_time = pallet_record.start_time
+                
+                # Deactivate the record
+                if pallet_record.readjustment_document and pallet_record.readjustment_document.id == record.id:
                     pallet_record.readjustment_document = False
-                    pallet_record.active = False
-                else:
-                    # raise UserError(pallet_record.effective_document.name)
-                    pallet_record.active = False
+                pallet_record.active = False
+                
                 _logger.info("Deactivated pallet kilos record: %s", pallet_record.effective_document.name)
-                # Re-sync relevant records
-                record.re_sync_pallet_kilos_after_a_voided_transfer(record.x_studio_start_time, record.create_date)
-    
+                
+                # Recalculate running balances from this point forward
+                # Use the model's efficient recalculation method
+                pallet_record._recalculate_running_balances(
+                    warehouse_id, 
+                    is_blast_freezer, 
+                    start_time
+                )
+                
                 _logger.info("Voided transfer and archived Pallet Kilos Log: %s", record.name)
             else:
                 _logger.warning("No pallet kilos record found for transfer: %s", record.name)
-
-
-
-    def re_sync_pallet_kilos_after_a_voided_transfer(self, start_time, create_date):
-        """Re-sync pallet kilos records created after the voided transfer."""
-        domain = [
-            ('create_date', '>', create_date),
-            ('start_time', '>', start_time)
-        ]
-
-        records_to_sync = self.env['pallet_kilos_record_model.pallet_kilos_record_model'].search(domain)
-
-        for record in records_to_sync:
-            try:
-                record.resync_all()
-                _logger.debug("Resynced pallet record: %s", record.effective_document.name)
-            except Exception as e:
-                _logger.error("Failed to resync record %s: %s", record.effective_document.name, str(e))
-            
+    
     def unvoid_transfer(self):
         """Reverse the void operation: unmark transfer as voided and reactivate the associated pallet kilos record."""
         for record in self:
@@ -1788,150 +1902,189 @@ class transfer_locations(models.Model):
             )
             
             if pallet_record:
-                # If the pallet record was deactivated (not a readjustment case), reactivate it
+                # Store data needed for recalculation
+                warehouse_id = pallet_record.warehouse.id
+                is_blast_freezer = pallet_record.is_blast_freezer
+                start_time = pallet_record.start_time
+                
+                # Reactivate the record
                 if not pallet_record.active and not pallet_record.readjustment_document:
                     pallet_record.active = True
                     _logger.info("Reactivated pallet kilos record: %s", pallet_record.effective_document.name)
-                # If it was a readjustment case, restore the readjustment_document link
                 elif not pallet_record.readjustment_document:
                     pallet_record.readjustment_document = record.id
+                    pallet_record.active = True  # Ensure it's active when restoring readjustment
                     _logger.info("Restored readjustment document link for pallet kilos record: %s", pallet_record.effective_document.name)
                 
-                # Re-sync relevant records after unvoiding
-                record.re_sync_pallet_kilos_after_unvoided_transfer(record.x_studio_start_time, record.create_date)
+                # Refresh the record data after reactivation
+                pallet_record._populate_vehicle_data()
+                pallet_record._populate_operations_data()
+                pallet_record._populate_returns_data()
+                
+                # Recalculate running balances from this point forward
+                pallet_record._recalculate_running_balances(
+                    warehouse_id, 
+                    is_blast_freezer, 
+                    start_time
+                )
                 
                 _logger.info("Unvoided transfer and restored Pallet Kilos Log: %s", record.name)
             else:
                 _logger.warning("No pallet kilos record found for transfer: %s", record.name)
-    
-    def re_sync_pallet_kilos_after_unvoided_transfer(self, start_time, create_date):
-        """Re-sync pallet kilos records created after the unvoided transfer."""
-        domain = [
-            ('create_date', '>', create_date),
-            ('start_time', '>', start_time)
-        ]
-        records_to_sync = self.env['pallet_kilos_record_model.pallet_kilos_record_model'].search(domain)
-        for record in records_to_sync:
-            try:
-                record.resync_all()
-                _logger.debug("Resynced pallet record after unvoiding: %s", record.effective_document.name)
-            except Exception as e:
-                _logger.error("Failed to resync record %s after unvoiding: %s", record.effective_document.name, str(e))
 
     
-        
+                
     def get_grouped_move_lines_for_report(self):
-            """
-            Preprocess move lines for report rendering.
-            Groups lines by item description key and marks which ones should display the description.
+        """
+        Preprocess move lines for report rendering.
+        Groups lines by item description key and marks which ones should display the description.
+        
+        Returns:
+            tuple: (processed_lines, grand_total_by_uom)
+            - processed_lines: List of dictionaries with processed move line data
+            - grand_total_by_uom: Dictionary with UOM totals for grand total
+        """
+        all_move_lines = []
+        
+        # Collect all move lines
+        for move in self.move_ids:
+            for line in move.move_line_ids:
+                all_move_lines.append(line)
+        
+        # Sort by product name (optional - adjust sorting as needed)
+        sorted_move_lines = sorted(all_move_lines, key=lambda l: l.product_id.name if l.product_id else '')
+        
+        processed_lines = []
+        seen_descriptions = set()
+        grand_total_by_uom = {}
+        
+        # First pass: determine if we have only one pallet and one product
+        unique_descriptions = set()
+        for line in sorted_move_lines:
+            move = line
+            product_name = line.product_id.name if line.product_id else ''
+            container_number = move.x_studio_container_number or ''
             
-            Returns:
-                tuple: (processed_lines, grand_total_by_uom)
-                - processed_lines: List of dictionaries with processed move line data
-                - grand_total_by_uom: Dictionary with UOM totals for grand total
-            """
-            all_move_lines = []
+            # Format dates
+            production_date = ''
+            if move.x_studio_production_date:
+                production_date = move.x_studio_production_date.strftime('%b%d.%Y').upper()
             
-            # Collect all move lines
-            for move in self.move_ids:
-                for line in move.move_line_ids:
-                    all_move_lines.append(line)
+            expiration_date = ''
+            if move.x_studio_expiration_date:
+                expiration_date = move.x_studio_expiration_date.strftime('%b%d.%Y').upper()
             
-            # Sort by product name (optional - adjust sorting as needed)
-            sorted_move_lines = sorted(all_move_lines, key=lambda l: l.product_id.name if l.product_id else '')
+            description_key = f"{product_name}|{container_number}|{production_date}|{expiration_date}"
+            unique_descriptions.add(description_key)
+        
+        # Check if we should hide details (only one pallet AND only one product)
+        is_single_pallet_single_product = len(unique_descriptions) == 1 and len(sorted_move_lines) == 1
+        
+        # Second pass: process lines
+        # Track seen descriptions per page
+        seen_descriptions_current_page = set()
+        items_per_page = 15  # Should match your XML template
+        
+        for line_index, line in enumerate(sorted_move_lines):
+            move = line
             
-            processed_lines = []
-            seen_descriptions = set()
-            grand_total_by_uom = {}
-            unique_descriptions = []  # Track unique descriptions in order
+            # Create the description key for grouping
+            product_name = line.product_id.name if line.product_id else ''
+            container_number = move.x_studio_container_number or ''
             
-            for line in sorted_move_lines:
-                move = line
-                
-                # Create the description key for grouping
-                product_name = line.product_id.display_name if line.product_id else ''
-                container_number = move.x_studio_container_number or ''
-                
-                # Format dates
-                production_date = ''
-                if move.x_studio_production_date:
-                    production_date = move.x_studio_production_date.strftime('%b%d.%Y').upper()
-                
-                expiration_date = ''
-                if move.x_studio_expiration_date:
-                    expiration_date = move.x_studio_expiration_date.strftime('%b%d.%Y').upper()
-                
-                # Create the description key for grouping (used to determine uniqueness)
-                description_key = f"{product_name}|{container_number}|{production_date}|{expiration_date}"
-                
-                # Create the formatted description for display
-                description_parts = []
-                if product_name:
-                    description_parts.append(product_name)
-                if container_number:
-                    description_parts.append(container_number)
-                if production_date and expiration_date:
-                    description_parts.append(f"{production_date} - {expiration_date}")
-                elif production_date:
-                    description_parts.append(production_date)
-                elif expiration_date:
-                    description_parts.append(expiration_date)
-                
-                formatted_description = '<br/>'.join(description_parts)
-                
-                # Determine if we should show the description (first occurrence of this key)
-                show_description = description_key not in seen_descriptions
-                if show_description:
-                    seen_descriptions.add(description_key)
-                    unique_descriptions.append(description_key)  # Track order of unique descriptions
-                
-                # Get UOM and quantity
-                uom = move.x_studio_quantity_uom.name if move and move.x_studio_quantity_uom else move.x_studio_quantity_uom_delivery.name
-                quantity = line.x_studio_2nd_uom or move.x_studio_affected_2nd_uom
-                
-                # Add to grand total by UOM
-                if uom:
-                    if uom not in grand_total_by_uom:
-                        grand_total_by_uom[uom] = 0
-                    grand_total_by_uom[uom] += quantity
-                
-                # Build pallet number with fallback logic
-                if line.package_id and not line.picking_id.x_studio_is_a_blast_freezer:
-                    pallet_no = f"{line.x_studio_pallet_series_id}/{line.package_id.name}/{line.x_studio_return_count}"
-                elif line.picking_id.x_studio_is_a_blast_freezer:
-                    pallet_no = line.bf_pallet_char
-                else:
-                    pallet_no = line.result_package_id.name if line.result_package_id else ''
+            # Format dates
+            production_date = ''
+            if move.x_studio_production_date:
+                production_date = move.x_studio_production_date.strftime('%b%d.%Y').upper()
+            
+            expiration_date = ''
+            if move.x_studio_expiration_date:
+                expiration_date = move.x_studio_expiration_date.strftime('%b%d.%Y').upper()
+            
+            # Create the description key for grouping (used to determine uniqueness)
+            description_key = f"{product_name}|{container_number}|{production_date}|{expiration_date}"
+            
+            # Create the formatted description for display
+            description_parts = []
+            if product_name:
+                description_parts.append(product_name)
+            if container_number:
+                description_parts.append(container_number)
+            if production_date and expiration_date:
+                description_parts.append(f"{production_date} - {expiration_date}")
+            elif production_date:
+                description_parts.append(production_date)
+            elif expiration_date:
+                description_parts.append(expiration_date)
+            
+            formatted_description = '<br/>'.join(description_parts)
+            
+            # Determine if this line should start a new page
+            # Check if we're at the beginning of a new page (except for the first line)
+            is_new_page = line_index > 0 and line_index % items_per_page == 0
+            
+            # If starting a new page, reset the seen descriptions for current page
+            if is_new_page:
+                seen_descriptions_current_page = set()
+            
+            # Determine if we should show the description
+            # Show if: first occurrence of this key on current page OR starting a new page
+            show_description = False
+            if description_key not in seen_descriptions_current_page or is_new_page:
+                show_description = True
+                seen_descriptions_current_page.add(description_key)
+            
+            # Get UOM and quantity
+            uom = move.x_studio_quantity_uom.name if move and move.x_studio_quantity_uom else move.x_studio_quantity_uom_delivery.name
+            quantity = line.x_studio_2nd_uom or move.x_studio_affected_2nd_uom
+            
+            # Add to grand total by UOM
+            if uom:
+                if uom not in grand_total_by_uom:
+                    grand_total_by_uom[uom] = 0
+                grand_total_by_uom[uom] += quantity
+            
+            # Build pallet number with fallback logic
+            if line.package_id and not line.picking_id.x_studio_is_a_blast_freezer:
+                pallet_no = f"{line.package_id.name}"
+            elif line.picking_id.x_studio_is_a_blast_freezer:
+                pallet_no = line.bf_pallet_char
+            else:
+                pallet_no = line.result_package_id.name if line.result_package_id else ''
     
-                # Append processed line (removed pallet counting logic - will be done per page)
-                processed_lines.append({
-                    'pallet_no': pallet_no,
-                    'item_description': formatted_description,
-                    'show_description': show_description,
-                    'description_key': description_key,  # Add this for later identification
-                    'quantity': quantity,
-                    'uom': uom,
-                    'weight': line.quantity or 0,
-                    'weight_uom': line.product_uom_id.name if line.product_uom_id else '',
-                    'original_line': line  # Reference for any additional data
-                })
+            # Append processed line
+            processed_lines.append({
+                'pallet_no': pallet_no,
+                'item_description': formatted_description,
+                'show_description': show_description,
+                'description_key': description_key,  # Keep for new page logic
+                'quantity': quantity,
+                'uom': uom,
+                'weight': line.quantity or 0,
+                'weight_uom': line.product_uom_id.name if line.product_uom_id else '',
+                'original_line': line,  # Reference for any additional data
+                'is_new_page': is_new_page  # Flag for new page starts
+            })
+        
+        # Add "***Nothing Follows***" to the very last row after all pallets are rendered
+        if processed_lines:
+            # Always add "Nothing Follows" as a separate line to preserve product details
+            last_line = processed_lines[-1].copy()
             
-            # Add "***Nothing Follows***" to the last occurrence of the last unique description
-            if unique_descriptions and processed_lines:
-                last_description_key = unique_descriptions[-1]
-                
-                # Find the last line with the last unique description and modify it
-                for i in range(len(processed_lines) - 1, -1, -1):
-                    if (processed_lines[i]['description_key'] == last_description_key and 
-                        processed_lines[i]['show_description']):
-                        processed_lines[i]['item_description'] += '<br/>***Nothing Follows***'
-                        break
-                
-                # Remove the description_key as it's no longer needed in the template
-                for line in processed_lines:
-                    del line['description_key']
+            # Create the "Nothing Follows" line
+            nothing_follows_line = last_line.copy()
+            nothing_follows_line['item_description'] = '***Nothing Follows***'
+            nothing_follows_line['show_description'] = True
+            nothing_follows_line['description_key'] = 'nothing_follows'
+            nothing_follows_line['pallet_no'] = ''  # Clear pallet number for "Nothing Follows"
+            nothing_follows_line['quantity'] = 0
+            nothing_follows_line['weight'] = 0
+            nothing_follows_line['uom'] = ''
+            nothing_follows_line['weight_uom'] = ''
+            
+            processed_lines.append(nothing_follows_line)
     
-            return processed_lines, grand_total_by_uom
+        return processed_lines, grand_total_by_uom
     
     def get_uom_totals_for_page(self, processed_lines, start_idx, end_idx):
         """
@@ -2022,6 +2175,7 @@ class transfer_locations(models.Model):
             # Dictionary to group move lines by unique SKU combination
             grouped_moves = defaultdict(lambda: {
                 'product_id': None,
+                'base_name': None,
                 'product_name': '',
                 'production_date': None,
                 'expiration_date': None,
@@ -2063,9 +2217,9 @@ class transfer_locations(models.Model):
                         grouped_moves[key]['product_id'] = move.product_id
                         
                         # Build product name with dates
-                        base_name = move.product_id.display_name or move.product_id.name
+                        base_name = move.product_id.name or move.product_id.name
                         date_info = []
-                        
+                        grouped_moves[key]['sort_name'] = base_name
                         if prod_date:
                             date_info.append(f"{prod_date.strftime('%b').upper()}.{prod_date.day}.{prod_date.year}")
             
@@ -2100,12 +2254,18 @@ class transfer_locations(models.Model):
                     grouped_moves[key]['packaging_qty'] += move_line.x_studio_2nd_uom if move_line.x_studio_2nd_uom else move_line.x_studio_affected_2nd_uom
 
                     # Track unique packages for pallet count
-                    if move_line.package_id:
+                    if move_line.package_id and not move_line.picking_id.x_studio_is_a_blast_freezer:
                         grouped_moves[key]['package_ids'].add(move_line.package_id.id)
                         if move_line.package_id.id not in package_ids:
                             package_ids.add(move_line.package_id.id)
                             grouped_moves[key]['pallet_count'] += 1 if move_line.reserved_quantity_on_validation == 0 else 0
-                            
+
+                    elif move_line.bf_pallet_char and move_line.picking_id.x_studio_is_a_blast_freezer:
+                        
+                        grouped_moves[key]['package_ids'].add(move_line.bf_pallet_char)
+                        if move_line.bf_pallet_char not in package_ids:
+                            package_ids.add(move_line.bf_pallet_char)
+                            grouped_moves[key]['pallet_count'] += 1 if move_line.reserved_quantity_on_validation == 0 else 0
 
                     elif move_line.result_package_id:
                         grouped_moves[key]['package_ids'].add(move_line.result_package_id.id)
@@ -2113,10 +2273,7 @@ class transfer_locations(models.Model):
                             package_ids.add(move_line.result_package_id.id)
                             grouped_moves[key]['pallet_count'] += 1 if move_line.reserved_quantity_on_validation == 0 else 0
                             
-                    elif move_line.bf_pallet_char and move_line.picking_id.x_studio_is_a_blast_freezer:
-                        grouped_moves[key]['package_ids'].add(move_line.bf_pallet_char)
-                        package_ids.add(move_line.bf_pallet_char)
-                        grouped_moves[key]['pallet_count'] += 1 if move_line.reserved_quantity_on_validation == 0 else 0
+
     
                     
             # Convert to list and calculate final pallet counts
@@ -2127,7 +2284,7 @@ class transfer_locations(models.Model):
                 processed_moves.append(data)
             
             # Sort by product name for consistent ordering
-            processed_moves.sort(key=lambda x: x['product_name'])
+            processed_moves.sort(key=lambda x: x['sort_name'])
             
             # Add "***Nothing Follows***" to the last item's product_name
             if processed_moves:
@@ -2142,16 +2299,27 @@ class transfer_locations(models.Model):
         """
         uom_totals = defaultdict(float)
         uom_totals_demand = defaultdict(float)
+        uom_totals_actual = defaultdict(float)
+        uom_total_actual_kg = defaultdict(float)
+        uom_total_demand_kg = defaultdict(float)
         for move in moves:
             uom = move['uom_name'] or 'Units'
             uom_totals[uom] += move['qty_actual']
             uom_totals_demand[uom] += move['qty_demand']
+            uom_totals_actual[uom] += move['packaging_qty']
             uom_demand = move['uom_name'] or 'Units'
+            uom_total_actual_kg[uom] += move['qty_actual']
+            uom_total_demand_kg[uom] += move['weight_demand']
+            
         
         # Format the grouped quantities and UOMs separately
         qty_parts = []
         uom_parts = []
         qty_demand_parts = []
+        qty_actual_parts = []
+
+        kg_demand_parts = []
+        kg_actual_parts = []
         
         for uom, qty in uom_totals.items():
             qty_parts.append(f"{qty:,.0f}")
@@ -2159,15 +2327,27 @@ class transfer_locations(models.Model):
             
         for uom, qty in uom_totals_demand.items():
             qty_demand_parts.append(f"{qty:,.0f}")
-        
+
+        for uom, qty in uom_totals_actual.items():
+            qty_actual_parts.append(f"{qty:,.0f}")
+
+        for uom, kg in uom_total_actual_kg.items():
+            kg_actual_parts.append(f"{kg:,.0f}")
+
+        for uom, kg in uom_total_demand_kg.items():
+            kg_demand_parts.append(f"{kg:,.0f}")
+            
         return {
             'qty_formatted': "<br/>".join(qty_parts) if qty_parts else "0",
             'uom_formatted': "<br/>".join(uom_parts) if uom_parts else "",
-            'qty_demand_formatted': "<br/>".join(qty_demand_parts) if qty_demand_parts else "0"
+            'qty_demand_formatted': "<br/>".join(qty_demand_parts) if qty_demand_parts else "0",
+            'qty_actual_formatted': "<br/>".join(qty_actual_parts) if qty_actual_parts else "0",
+            'kg_actual_formatted': "<br/>".join(kg_actual_parts) if kg_actual_parts else "0",
+            'kg_demand_formatted': "<br/>".join(kg_demand_parts) if kg_demand_parts else "0"
             
         }
     
-    def calculate_page_data(self, processed_moves, page_size=15):
+    def calculate_page_data(self, processed_moves, page_size=9):
         """
         Calculate pagination data for the processed moves
         """
@@ -2192,8 +2372,11 @@ class transfer_locations(models.Model):
                 'packaging_qty': sum(move['packaging_qty'] for move in page_moves),
                 'pallet_count': sum(move['pallet_count'] for move in page_moves),
                 'qty_formatted': uom_data['qty_formatted'],
+                'qty_actual_formatted': uom_data['qty_actual_formatted'],
                 # 'pallet_count': sum(move['pallet_count'] for move in page_moves),
-                'uom_formatted': uom_data['uom_formatted']
+                'uom_formatted': uom_data['uom_formatted'],
+                'kg_actual_formatted': uom_data['kg_actual_formatted'],
+                'kg_demand_formatted': uom_data['kg_demand_formatted'],
             }
             
             page_data.append({
@@ -2214,7 +2397,10 @@ class transfer_locations(models.Model):
             'pallet_count': sum(move['pallet_count'] for move in processed_moves),
             'qty_formatted': grand_uom_data['qty_formatted'],
             'qty_demand_formatted':  grand_uom_data['qty_demand_formatted'],
-            'uom_formatted': grand_uom_data['uom_formatted']
+            'qty_actual_formatted': grand_uom_data['qty_actual_formatted'],
+            'uom_formatted': grand_uom_data['uom_formatted'],
+            'kg_actual_formatted': grand_uom_data['kg_actual_formatted'],
+            'kg_demand_formatted': uom_data['kg_demand_formatted'],
         }
         
         return {
@@ -2236,7 +2422,72 @@ class transfer_locations(models.Model):
             'processed_moves': processed_moves,
             'pagination_data': pagination_data
         }
+
+    # Picklist
+    def get_picklist_page_totals_by_uom(self, page_start_index, page_end_index):
+        """
+        Calculate page totals grouped by UOM for picklist
+        Returns dictionary with UOM as key and totals as values
+        """
+        page_totals = {}
         
+        for i in range(page_start_index, min(page_end_index, len(self.move_line_ids))):
+            move_line = self.move_line_ids[i]
+            uom_name = move_line.x_studio_quantity_uom_delivery.name if move_line.x_studio_quantity_uom_delivery else 'Unknown'
+            
+            if uom_name not in page_totals:
+                page_totals[uom_name] = {
+                    'qty': 0,
+                    'packs': 0,
+                    'kg': 0,
+                    'uom': move_line.x_studio_quantity_uom_delivery
+                }
+            
+            # Add to totals
+            page_totals[uom_name]['qty'] += move_line.x_studio_actual_packaging or 0
+            page_totals[uom_name]['packs'] += move_line.x_studio_actual_min or 0
+            page_totals[uom_name]['kg'] += move_line.x_studio_actual_kg or 0
+        
+        return page_totals
+    
+    def get_picklist_grand_totals_by_uom(self):
+        """
+        Calculate grand totals grouped by UOM for picklist
+        Returns dictionary with UOM as key and totals as values
+        """
+        grand_totals = {}
+        
+        for move_line in self.move_line_ids:
+            uom_name = move_line.x_studio_quantity_uom_delivery.name if move_line.x_studio_quantity_uom_delivery else 'Unknown'
+            
+            if uom_name not in grand_totals:
+                grand_totals[uom_name] = {
+                    'qty': 0,
+                    'packs': 0,
+                    'kg': 0,
+                    'uom': move_line.x_studio_quantity_uom_delivery
+                }
+            
+            # Add to totals
+            grand_totals[uom_name]['qty'] += move_line.x_studio_affected_2nd_uom or 0
+            grand_totals[uom_name]['packs'] += move_line.x_studio_withdraw_units or 0
+            grand_totals[uom_name]['kg'] += move_line.x_studio_actual_kg or 0
+        
+        return grand_totals
+    
+    def get_picklist_sorted_uom_list(self):
+        """
+        Get sorted list of UOMs present in the picklist
+        Returns list of UOM names sorted alphabetically
+        """
+        uom_set = set()
+        for move_line in self.move_line_ids:
+            uom_name = move_line.x_studio_quantity_uom_delivery.name if move_line.x_studio_quantity_uom_delivery else 'Unknown'
+            uom_set.add(uom_name)
+        
+        return sorted(list(uom_set))
+
+    
     def auto_fix_discrepancy(self):
         for record in self:
             stock_moves = record.move_ids_without_package
@@ -2367,6 +2618,7 @@ class transfer_locations(models.Model):
                 ('location_id', 'in', child_location_ids),  # Get all child locations, including self
                 ('owner_id', '=', self.partner_id.id if self.partner_id else False),
                 ('lot_id', 'not in', lot_ids),
+                ('quantity', '!=', 0),
                 ('package_id', '!=', False), ('lot_id', '!=', False), ('x_studio_record_reference', '!=', False), ('id', 'not in', self.move_line_ids.mapped('computed_quant_id.id'))]
 
         return {
@@ -2376,7 +2628,7 @@ class transfer_locations(models.Model):
             'res_model': 'stock.quant',
             'view_id': self.env.ref('multiple_relocation.view_stock_quant_tree_custom_2').id,  # Specify the editable tree view
             'domain': domain,
-            'context': {'create': False, 'picking_id': self.id},
+            'context': {'create': False, 'picking_id': self.id, 'state': self.state},
         }
         
     
@@ -2407,11 +2659,9 @@ class transfer_locations(models.Model):
                 
                 # Set the allowed product ids in Many2many format
                 record.allowed_product_ids = [(6, 0, allowed_product_ids.ids)]
-                
-                # If you want to inspect the allowed products, uncomment the following line
-                # raise UserError("Allowed Products: {}".format(allowed_product_ids))
+   
             else:
-                record.allowed_product_ids = self.env['product.product'].search([])
+                record.allowed_product_ids = self.env['product.product'].search([('sale_ok', '!=', False)])
             
     
         
@@ -2453,7 +2703,7 @@ class transfer_locations(models.Model):
     def _onchange_locations_receipt(self):
         for record in self:
             
-           if record.picking_type_id and 'receipts' in record.picking_type_id.name.lower():
+           if record.picking_type_id and record.picking_type_code == 'incoming':
                 for move_lines in record.move_line_ids:
                     location_dest_id = move_lines.location_dest_id
                     
@@ -2463,7 +2713,7 @@ class transfer_locations(models.Model):
     @api.onchange('result_package_id')
     def _onchange_pallet_receipt(self):
         for record in self:
-            if record.picking_type_id and 'receipts' in record.picking_type_id.name.lower():
+            if record.picking_type_id and record.picking_type_code == 'incoming':
                 for move_lines in record.move_line_ids:
                     if move_lines.result_package_id:
                         move_lines.result_package_id.x_studio_is_reserved = False
@@ -2859,5 +3109,24 @@ class ClientExpiryTable(models.Model):
 
 
 
+class ProductProduct(models.Model):
+    _inherit = 'product.product'
 
+    name = fields.Char(compute='_compute_name', store=True, readonly=False)
+
+    
+    @api.depends('product_tmpl_id.name', 'product_template_attribute_value_ids.name', 'product_template_attribute_value_ids.attribute_id.name')
+    def _compute_name(self):
+        for product in self:
+            template_name = product.product_tmpl_id.name or ''
+            
+            variants = [
+                f"{v.attribute_id.name}: {v.name}"
+                for v in product.product_template_attribute_value_ids
+                if v.attribute_id and v.name
+            ]
+            if variants:
+                product.name = f"{template_name} - ({', '.join(variants)})"
+            else:
+                product.name = template_name
 
