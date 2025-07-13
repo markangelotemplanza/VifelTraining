@@ -30,31 +30,34 @@
     <field name="model">pallet_kilos_record_model.pallet_kilos_record_model</field>
     <field name="arch" type="xml">
         <tree string="Pallet and Kilos Records"  default_order="start_time desc">
-            <field name="create_date"/>
+            <field name="active" optional="hide" string="Active"/>
+            <field name="create_date" optional="hide"/>
+            <field name="owner_id"/>
             <field name="start_time"/>
             <field name="end_time"/>
             <field name="effective_document" widget="many2onebutton"/>
+            <field name="return_id" widget="many2onebutton"/>
             <!-- <field name="report_no"/> -->
-            <field name="owner_id"/>
+            
             <field name="warehouse"/>
-            <field name="record_reference" optional="show"/>
-            <field name="truck_type" optional="show"/>
-            <field name="trucks_plate" optional="show"/>
-            <field name="gate_pass" optional="show"/>
+            <field name="record_reference" optional="hide"/>
+            <field name="truck_type" optional="hide"/>
+            <field name="trucks_plate" optional="hide"/>
+            <field name="gate_pass" optional="hide"/>
             <!-- <field name="overall_units" sum="Total Units"/>
             <field name="overall_packaging" sum="Total Packaging"/> -->
-            <field name="overall_pallets" sum="Total Pallets" optional="show"/>
-            <field name="overall_kilos" sum="Total Kilos" optional="show"/>
+
 
             <field name="pallets_received" sum="Sum"/>
             <field name="pallets_withdrawn" sum="Sum"/>
             <field name="kilos_received" sum="Sum"/>
             <field name="kilos_withdrawn" sum="Sum"/>
-            
             <field name="total_balance_in_units" optional="show"/>
             <field name="total_balance_in_packaging" optional="show"/>
             <field name="total_balance_in_pallets" optional="show"/>
             <field name="total_balance_in_kilos" optional="show"/>
+            <field name="overall_pallets" sum="Total Pallets" optional="hide"/>
+            <field name="overall_kilos" sum="Total Kilos" optional="hide"/>
 
         </tree>
     </field>
@@ -143,7 +146,16 @@
                             </group>
                         </group>
                     </page>
-                    
+                    <page string="Adjustment Information">
+                        <group>
+                            <group string="Adjustment">
+                                <field name="adjustment_heads"/>
+                                <field name="adjustment_packaging"/>
+                                <field name="adjustment_pallets" />
+                                <field name="adjustment_kilos"/>
+                            </group>
+                        </group>
+                    </page>
 
                 </notebook>
             </sheet>
